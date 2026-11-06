@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright (c) 2026 Opal Kelly Incorporated
+
+  This source code is licensed under the MIT license found in the
+  LICENSE file in the root directory of this source tree.
+-->
+
+<!-- Camera GUI layout (loaded at runtime via wxXmlResource). The okCameraApp's
+     structure: a scrolled sidebar of controls beside the image. The branding header (brand_host),
+     the image viewport and the histogram (main_host) are custom/animated widgets filled in code. -->
+<resource version="2.5.3.0">
+    <object class="wxPanel" name="root_panel">
+        <object class="wxBoxSizer">
+            <orient>wxHORIZONTAL</orient>
+
+            <!-- ===================== Sidebar ===================== -->
+            <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxScrolledWindow" name="scrolled_sidebar">
+                    <size>300,-1</size>
+                    <scrollrate>0,10</scrollrate>
+                    <object class="wxBoxSizer">
+                        <orient>wxVERTICAL</orient>
+
+                        <object class="spacer"><size>0,24</size></object>
+
+                        <!-- Branding header (logo + LED + wordmark), filled in code -->
+                        <object class="sizeritem">
+                            <flag>wxALIGN_CENTRE</flag>
+                            <object class="wxPanel" name="brand_host"><size>230,110</size></object>
+                        </object>
+
+                        <object class="spacer"><size>0,18</size></object>
+
+                        <object class="sizeritem">
+                            <flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                            <object class="wxStaticText" name="text_realm"><label>Realm: Local USB</label></object>
+                        </object>
+                        <object class="spacer"><size>0,8</size></object>
+                        <object class="sizeritem">
+                            <flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                            <object class="wxButton" name="btn_fpoip"><label>FrontPanel-over-IP...</label></object>
+                        </object>
+
+                        <object class="spacer"><size>0,14</size></object>
+                        <object class="sizeritem"><flag>wxLEFT</flag><border>16</border>
+                            <object class="wxStaticText"><label>Device</label></object>
+                        </object>
+                        <object class="spacer"><size>0,4</size></object>
+                        <object class="sizeritem">
+                            <flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                            <object class="wxChoice" name="choice_devices"/>
+                        </object>
+
+                        <object class="spacer"><size>0,16</size></object>
+                        <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                            <object class="wxStaticLine"/>
+                        </object>
+                        <object class="spacer"><size>0,16</size></object>
+
+                        <object class="sizeritem">
+                            <flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                            <object class="wxStaticText" name="text_status"><label>Monitoring for devices...</label></object>
+                        </object>
+
+                        <!-- ============ Camera controls (hidden until ready) ============ -->
+                        <object class="sizeritem">
+                            <flag>wxEXPAND</flag>
+                            <object class="wxPanel" name="panel_camera">
+                                <hidden>1</hidden>
+                                <object class="wxBoxSizer">
+                                    <orient>wxVERTICAL</orient>
+
+                                    <object class="spacer"><size>0,12</size></object>
+                                    <!-- Status: Camera FPS / System FPS -->
+                                    <object class="sizeritem">
+                                        <flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                            <object class="sizeritem">
+                                                <object class="wxStaticText" name="text_camera_fps"><label>Camera FPS: 0</label></object>
+                                            </object>
+                                            <object class="spacer"><option>1</option></object>
+                                            <object class="sizeritem">
+                                                <object class="wxStaticText" name="text_system_fps"><label>System FPS: 0</label></object>
+                                            </object>
+                                        </object>
+                                    </object>
+                                    <object class="spacer"><size>0,12</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxStaticLine"/></object>
+                                    <object class="spacer"><size>0,10</size></object>
+
+                                    <!-- Capture: Continuous (video) + Single -->
+                                    <object class="sizeritem">
+                                        <flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxToggleButton" name="btn_continuous">
+                                            <label>Continuous Capture (Video)</label>
+                                        </object>
+                                    </object>
+                                    <object class="spacer"><size>0,8</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxButton" name="btn_capture"><label>Single Capture</label></object>
+                                    </object>
+                                    <object class="spacer"><size>0,10</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxButton" name="btn_restart"><label>Restart Device</label></object>
+                                    </object>
+
+                                    <object class="spacer"><size>0,12</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxStaticLine"/></object>
+                                    <object class="spacer"><size>0,6</size></object>
+
+                                    <!-- Device Settings: Camera Mode + Motion Speed -->
+                                    <object class="sizeritem"><flag>wxLEFT|wxTOP</flag><border>16</border>
+                                        <object class="wxStaticText"><label>Camera Mode</label></object></object>
+                                    <object class="spacer"><size>0,4</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxChoice" name="choice_mode"/></object>
+
+                                    <!-- Motion Speed (own panel; shown only for ramp patterns) -->
+                                    <object class="sizeritem">
+                                        <flag>wxEXPAND</flag>
+                                        <object class="wxPanel" name="panel_motion">
+                                            <hidden>1</hidden>
+                                            <object class="wxBoxSizer"><orient>wxVERTICAL</orient>
+                                                <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag><border>16</border>
+                                                    <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                                        <object class="sizeritem"><option>1</option>
+                                                            <object class="wxStaticText"><label>Motion Speed</label></object></object>
+                                                        <object class="sizeritem">
+                                                            <object class="wxStaticText" name="val_motion"><label>3</label></object></object>
+                                                    </object>
+                                                </object>
+                                                <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                                    <object class="wxSlider" name="slider_motion">
+                                                        <value>3</value><min>0</min><max>100</max></object></object>
+                                            </object>
+                                        </object>
+                                    </object>
+
+                                    <object class="spacer"><size>0,8</size></object>
+                                    <object class="sizeritem"><flag>wxLEFT</flag><border>16</border>
+                                        <object class="wxStaticText"><label>Capture Size</label></object></object>
+                                    <object class="spacer"><size>0,4</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxChoice" name="choice_size"/></object>
+
+                                    <object class="spacer"><size>0,8</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                            <object class="sizeritem"><flag>wxALIGN_CENTRE_VERTICAL</flag>
+                                                <object class="wxStaticText"><label>Image Size</label></object></object>
+                                            <object class="spacer"><option>1</option></object>
+                                            <object class="sizeritem">
+                                                <object class="wxChoice" name="choice_imagesize">
+                                                    <content><item>Scale</item><item>1:1</item></content>
+                                                    <selection>0</selection></object></object>
+                                        </object>
+                                    </object>
+
+                                    <object class="spacer"><size>0,8</size></object>
+                                    <object class="sizeritem"><flag>wxLEFT</flag><border>16</border>
+                                        <object class="wxCheckBox" name="chk_hist"><label>Show Histogram</label></object></object>
+
+                                    <object class="spacer"><size>0,8</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxStaticLine"/></object>
+                                    <object class="spacer"><size>0,6</size></object>
+
+                                    <!-- Image Settings: Exposure + AWB + R/G/B gains -->
+                                    <object class="sizeritem"><flag>wxLEFT|wxTOP</flag><border>16</border>
+                                        <object class="wxStaticText" name="lbl_exposure"><label>Exposure</label></object></object>
+                                    <object class="spacer"><size>0,4</size></object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                            <object class="sizeritem"><option>1</option><flag>wxALIGN_CENTRE_VERTICAL</flag>
+                                                <object class="wxSlider" name="slider_exposure"><value>24</value><min>0</min><max>35</max></object></object>
+                                            <object class="sizeritem"><flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag><border>6</border>
+                                                <object class="wxStaticText" name="val_exposure"><label>1/30</label></object></object>
+                                        </object>
+                                    </object>
+
+                                    <!-- AWB -->
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag><border>16</border>
+                                        <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                            <object class="sizeritem"><option>1</option>
+                                                <object class="wxStaticText"><label>Auto White Balance</label></object></object>
+                                            <object class="sizeritem">
+                                                <object class="wxStaticText" name="val_awb"><label>255</label></object></object>
+                                        </object>
+                                    </object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxSlider" name="slider_awb"><value>255</value><min>0</min><max>255</max></object></object>
+
+                                    <!-- Red Gain -->
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag><border>16</border>
+                                        <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                            <object class="sizeritem"><option>1</option>
+                                                <object class="wxStaticText"><label>Red Gain</label></object></object>
+                                            <object class="sizeritem">
+                                                <object class="wxStaticText" name="val_rgain"><label>127</label><fg>#EB5757</fg></object></object>
+                                        </object>
+                                    </object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxSlider" name="slider_rgain"><value>127</value><min>0</min><max>255</max></object></object>
+
+                                    <!-- Green Gain -->
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag><border>16</border>
+                                        <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                            <object class="sizeritem"><option>1</option>
+                                                <object class="wxStaticText"><label>Green Gain</label></object></object>
+                                            <object class="sizeritem">
+                                                <object class="wxStaticText" name="val_ggain"><label>127</label><fg>#44BD84</fg></object></object>
+                                        </object>
+                                    </object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxSlider" name="slider_ggain"><value>127</value><min>0</min><max>255</max></object></object>
+
+                                    <!-- Blue Gain -->
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag><border>16</border>
+                                        <object class="wxBoxSizer"><orient>wxHORIZONTAL</orient>
+                                            <object class="sizeritem"><option>1</option>
+                                                <object class="wxStaticText"><label>Blue Gain</label></object></object>
+                                            <object class="sizeritem">
+                                                <object class="wxStaticText" name="val_bgain"><label>127</label><fg>#3B62DA</fg></object></object>
+                                        </object>
+                                    </object>
+                                    <object class="sizeritem"><flag>wxEXPAND|wxLEFT|wxRIGHT</flag><border>16</border>
+                                        <object class="wxSlider" name="slider_bgain"><value>127</value><min>0</min><max>255</max></object></object>
+
+                                    <object class="spacer"><size>0,16</size></object>
+                                </object>
+                            </object>
+                        </object>
+                    </object>
+                </object>
+            </object>
+
+            <!-- ===================== Main image area (viewport + histogram, filled in code) ===================== -->
+            <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND</flag>
+                <object class="wxPanel" name="main_host"/>
+            </object>
+        </object>
+    </object>
+</resource>

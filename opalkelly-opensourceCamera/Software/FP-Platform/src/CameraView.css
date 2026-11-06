@@ -1,0 +1,107 @@
+/**
+ * Copyright (c) 2024-2026 Opal Kelly Incorporated
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+.okCameraView {
+    /* Layout */
+    display: flex;
+    height: 100%;
+    padding: 22px 10px;
+    align-items: flex-start;
+    gap: 10px;
+    box-sizing: border-box;
+
+    /* Style */
+    overflow: hidden;
+    background: #343434;
+}
+
+.okCameraView button {
+    all: unset;
+}
+
+.okCameraView .okSidebarPanel {
+    /* Layout */
+    display: flex;
+    width: 48px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    flex-shrink: 0;
+}
+
+.okCameraView .okSidebarPanel .okMenuPanel {
+    /* Layout */
+    display: flex;
+    padding: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    align-self: stretch;
+
+    /* Style */
+    border-radius: 4px;
+    background: #1E1E1E;
+}
+
+.okCameraView .okSidebarPanel .okMenuPanel .okIconButton {
+    /* Layout */
+    display: flex;
+    width: 32px;
+    height: 32px;
+    padding: 4px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    box-sizing: border-box;
+
+    /* Style */
+    border-radius: 4px;
+    background: #3B62DA;
+}
+
+.okCameraView .okSidebarPanel .okMenuPanel .okIconButton:disabled {
+    /* Style */
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.okCameraView .okSidebarPanel .okMenuPanel .okToggleButton {
+    /* Layout */
+    display: flex;
+    width: 32px;
+    height: 32px;
+    padding: 4px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    box-sizing: border-box;
+
+    /* Style */
+    border-radius: 4px;
+    background: #343434;
+}
+
+.okCameraView .okSidebarPanel .okMenuPanel .okToggleButton[data-state="on"] {
+    /* Style */
+    background: #44BD84;
+}
+
+.okCameraView .okSidebarPanel .okMenuPanel .okToggleButton:hover {
+    /* Layout */
+    padding: 3px;
+
+    /* Style */
+    border: 0.2px solid #989DA3;
+}
+
+.okCameraView .okSidebarPanel .okMenuPanel .okToggleButton:disabled {
+    /* Style */
+    opacity: 0.5;
+    cursor: not-allowed;
+}

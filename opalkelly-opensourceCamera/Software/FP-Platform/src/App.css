@@ -1,0 +1,220 @@
+/**
+ * Copyright (c) 2024-2026 Opal Kelly Incorporated
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+.App {
+    text-align: center;
+    background-color: #282c34;
+    width: 100%;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.AppLogo {
+    text-align: center;
+    background-color: #282c34;
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: calc(10px + 2vmin);
+    color: white;
+}
+
+.DialogOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.DialogContent {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90vw;
+    max-width: 400px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+
+    background-color: #18191B;
+    border-radius: 6px;
+    box-shadow: 0 10px 38px rgba(0, 0, 0, 0.35), 0 10px 20px rgba(0, 0, 0, 0.2);
+    animation: contentShow 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.DialogContent:focus {
+    outline: none;
+}
+
+.DialogTitle {
+    margin: 0;
+    color: #FFF;
+    font-family: Inter, sans-serif;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.DialogBody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ProgressBarRoot {
+    position: relative;
+    overflow: hidden;
+    background: #3B4046;
+    border-radius: 4px;
+    width: 100%;
+    height: 8px;
+}
+
+.ProgressBarIndicator {
+    background: #4A9EFF;
+    height: 100%;
+    border-radius: 4px;
+    transition: width 100ms ease-out;
+}
+
+.ProgressText {
+    color: #999;
+    font-family: Inter, sans-serif;
+    font-size: 13px;
+}
+
+.SpinnerContainer {
+    display: flex;
+    justify-content: center;
+    padding: 8px 0;
+}
+
+.Spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid #3B4046;
+    border-top-color: #4A9EFF;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* reset */
+button {
+    all: unset;
+}
+
+.AlertDialogContent {
+    /* Layout */
+    display: inline-flex;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 90vw;
+    max-width: 500px;
+    max-height: 85vh;
+    padding: 15px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    transform: translate(-50%, -50%);
+
+    /* Style */
+    background-color: #18191B;
+    border-radius: 6px;
+    box-shadow: black;
+
+    animation: contentShow 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.AlertDialogContent:focus {
+    outline: none;
+}
+
+.AlertDialogTitle {
+    /* Layout */
+    margin: 0;
+
+    /* Typography */
+    color: #FFF;
+    font-family: Inter;
+    font-size: 20px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: normal;
+}
+
+.AlertDialogDescription {
+    /* Typography */
+    color: #FFF;
+    font-family: Inter;
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: normal;
+}
+
+.AlertDialogInstructions {
+    /* Typography */
+    color: #f5f5f5;
+    font-family: Inter;
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: normal;
+}
+
+.AlertDialogActionPanel {
+    /* Layout */
+    display: flex;
+    padding: 10px;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    align-self: stretch;
+}
+
+.AlertDialogActionPanel .okButton {
+    /* Layout */
+    display: inline-flex;
+    padding: 10px 18px;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+
+    /* Style */
+    border-width: 0px;
+    border-radius: 4px;
+    background: #EB5757;
+
+    /* Typography */
+    color: #fff;
+    text-align: center;
+    font-family: Inter, "Nunito Sans", sans-serif, ui-sans-serif;
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: 14px; /* 100% */
+
+    /* State Pressed */
+    &:is(:active) {
+        background: #C32F2F;
+    }
+
+    /* State Disabled */
+    &:is(:disabled) {
+        background: #d0d7df;
+    }
+}

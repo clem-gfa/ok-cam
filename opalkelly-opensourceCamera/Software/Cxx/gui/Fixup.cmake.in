@@ -1,0 +1,47 @@
+# Copyright (c) 2026 Opal Kelly Incorporated
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# Install-time self-containment for okCameraApp (configured from Fixup.cmake.in).
+#
+# Runs at `cmake --install` as an install(SCRIPT). It uses CMake's BundleUtilities fixup_bundle to
+# resolve the app's runtime dependency closure, copy the non-system libraries into the app, and rewrite
+# the load commands so the app runs with NO system wxWidgets install. This replaces the hand-rolled
+# stage-wx-macos.sh / stage-wx-linux.sh walkers and the Windows DLL skip-list.
+#
+# Per-OS policy is expressed through gp_resolved_file_type_override() (a documented BundleUtilities
+# hook that reclassifies a resolved dependency before fixup decides whether to copy it):
+#   - macOS : bundle wxWidgets AND the FrontPanel runtime into Contents/Frameworks (the app must be
+#             self-contained to launch on a stock Mac with no SDK). Default classification already
+#             copies Homebrew's wx + the third_party FrontPanel libs, so no override is needed.
+#   - Windows/Linux: bundle ONLY wxWidgets; keep the FrontPanel runtime EXTERNAL (the customer supplies
+#             it from their installed SDK), so FrontPanel libraries are forced to "system" (skip-copy).
+#   - Linux : additionally force libwx* to be copied even though apt installs it under a system path
+#             (/usr/lib/...), which fixup would otherwise treat as system and leave behind.
+#
+# @VAR@ placeholders are substituted by configure_file() in gui/CMakeLists.txt.
+cmake_minimum_required(VERSION 3.16)
+include(BundleUtilities)
+set(BU_CHMOD_BUNDLE_ITEMS ON)  # make copied items writable so install-name/rpath rewriting can proceed
+
+set(_app      "${CMAKE_INSTALL_PREFIX}/@_fixup_app@")
+get_filename_component(_app "${_app}" ABSOLUTE)  # a relative --prefix confuses BundleUtilities' verifier
+set(_dirs     "@_fixup_dirs@")      # extra dirs the resolver searches for dependent libraries
+set(_plugins  "@_fixup_plugins@")   # dlopen'd modules not in the link closure (macOS okimpl_fpoip)
+set(_plugins_abs "")
+foreach(_p IN LISTS _plugins)
+    get_filename_component(_p "${_p}" ABSOLUTE)
+    list(APPEND _plugins_abs "${_p}")
+endforeach()
+set(_plugins "${_plugins_abs}")
+
+# Reclassify selected dependencies before fixup_bundle copies them. `type_var` is set in PARENT_SCOPE
+# to one of: system (left in place), other (copied + relinked), embedded (already inside the bundle).
+function(gp_resolved_file_type_override file type_var)
+    get_filename_component(_name "${file}" NAME)
+@_fixup_override_body@
+endfunction()
+
+message(STATUS "fixup_bundle: ${_app}")
+fixup_bundle("${_app}" "${_plugins}" "${_dirs}")

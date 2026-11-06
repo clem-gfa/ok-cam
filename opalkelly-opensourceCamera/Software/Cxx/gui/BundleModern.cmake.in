@@ -1,0 +1,41 @@
+# Copyright (c) 2026 Opal Kelly Incorporated
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# Install-time wxWidgets bundling for Windows + Linux (configured from BundleModern.cmake.in).
+#
+# Runs at `cmake --install` as an install(SCRIPT). It uses the modern resolver
+# file(GET_RUNTIME_DEPENDENCIES) to find the app's runtime dependency closure and copies ONLY the
+# wxWidgets libraries next to the executable; the FrontPanel runtime and the system stack stay external.
+# This is the cross-platform replacement for the hand-rolled stage-wx-linux.sh walker and the Windows
+# DLL skip-list. (macOS instead uses BundleUtilities fixup_bundle -- see Fixup.cmake.in -- because a
+# .app additionally needs its dylib install names rewritten, which GET_RUNTIME_DEPENDENCIES does not do.)
+#
+# How wx is resolved at runtime once bundled:
+#   Linux   : the exe's $ORIGIN rpath (DT_RPATH) finds the libwx*.so sitting next to it.
+#   Windows : the wx*.dll sit next to okCameraApp.exe (the default DLL search order finds them).
+#
+# @VAR@ placeholders are substituted by configure_file() in gui/CMakeLists.txt.
+cmake_minimum_required(VERSION 3.21)  # file(GET_RUNTIME_DEPENDENCIES)
+
+# On Windows, point the resolver at the PE-import tool located next to the compiler at configure time
+# (dumpbin is not on PATH outside a VS developer prompt). Empty on Linux (objdump auto-detected).
+@_grd_tool@
+
+file(GET_RUNTIME_DEPENDENCIES
+    EXECUTABLES "${CMAKE_INSTALL_PREFIX}/@_grd_exe@"
+    RESOLVED_DEPENDENCIES_VAR _resolved
+    UNRESOLVED_DEPENDENCIES_VAR _unresolved
+    DIRECTORIES "@_grd_dirs@"
+    # Include only wxWidgets (matches both Windows wx*.dll and Linux libwx*.so); exclude everything
+    # else (FrontPanel, the system runtime/GTK stack). Include regexes win over exclude regexes.
+    PRE_INCLUDE_REGEXES "wx"   PRE_EXCLUDE_REGEXES ".*"
+    POST_INCLUDE_REGEXES "wx"  POST_EXCLUDE_REGEXES ".*")
+
+foreach(_f IN LISTS _resolved)
+    file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}" TYPE SHARED_LIBRARY
+         FOLLOW_SYMLINK_CHAIN FILES "${_f}")
+endforeach()
+list(LENGTH _resolved _n)
+message(STATUS "bundled ${_n} wxWidgets librar(y/ies) next to okCameraApp")

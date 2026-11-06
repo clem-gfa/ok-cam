@@ -1,0 +1,25 @@
+{
+    "appGuid": "64ce6665-44cb-4c7e-826e-b9a3c8f8f837",
+    "name": "Camera",
+    "version": "1.1.0",
+    "author": "Opal Kelly Incorporated",
+    "summary": "Machine vision image capture with a hardware ISP, real-time RGB histograms, and object detection.",
+    "description": "Streams live video from an Opal Kelly FPGA board and its camera peripheral through a hardware image-signal-processing pipeline with bad pixel correction, demosaicing, auto white balance, and adjustable color gains. Includes real-time red, green, and blue histograms, YOLO object detection with bounding boxes and class labels, and a hardware test pattern generator so the app runs with no camera attached.",
+    "icon": {
+        "source": "assets/images/camera-app-logo.svg"
+    },
+    "deviceBindings": [
+        {
+            "name": "Camera Device",
+            "description": "Camera Device"
+        }
+    ],
+    "compatibleDevices": [
+        "XEM8320-AU25P",
+        "SZG-HUB1450-AU10P"
+    ],
+    "initialContentSize": {
+        "width": 1236,
+        "height": 696
+    }
+}

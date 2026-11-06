@@ -1,0 +1,34 @@
+/**
+ * Copyright (c) 2024-2026 Opal Kelly Incorporated
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+.okLabel {
+    /* Layout */
+    position: absolute;
+    margin: 0px;
+    padding: 5px;
+    box-sizing: border-box;
+    z-index: inherit;
+
+    /* Style */
+    background: rgba(72, 108, 72, 0.8);
+    border: 1px dashed rgba(255, 255, 255, 0.7);
+
+    /* Typography */
+    color: #FFF;
+    font-size: 12px;
+}
+
+.okBoundingBox {
+    /* Layout */
+    position: absolute;
+    box-sizing: border-box;
+    z-index: inherit;
+
+    /* Style */
+    background: rgba(72, 108, 72, 0.4);
+    border: 1px dashed #fff;
+}

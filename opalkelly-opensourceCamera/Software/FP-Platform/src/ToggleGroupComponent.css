@@ -1,0 +1,56 @@
+/**
+ * Copyright (c) 2024-2026 Opal Kelly Incorporated
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+.okToggleGroup {
+    /* Layout */
+    display: flex;
+    height: 24px;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+/* reset */
+.okToggleGroup button {
+    all: unset;
+}
+
+.okToggleGroup .okToggleGroupItem {
+    /* Layout */
+    display: flex;
+    height: 24px;
+    padding: 0.3rem 0.5rem;
+    justify-content: center;
+    align-items: center;
+    gap: 0.3rem;
+    box-sizing: border-box;
+
+    /* Style */
+    border-radius: 4px;
+    background: #343434;
+    user-select: none;
+    outline: none;
+
+    /* Typography */
+    color: #FFFFFF;
+    text-align: center;
+    font-family: Inter;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 500;
+    line-height: 1;
+}
+
+.okToggleGroup .okToggleGroupItem:hover {
+    /* Style */
+    background-color: #000000;
+}
+
+.okToggleGroup .okToggleGroupItem[data-state="on"] {
+    /* Style */
+    border-radius: 4px;
+    background: #3B62DA;
+}

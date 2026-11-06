@@ -1,0 +1,15 @@
+# Copyright (c) 2026 Opal Kelly Incorporated
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# Build output
+/build/
+build/
+
+# wxWidgets is fetched per machine by scripts/setup-wxwidgets.ps1; never committed.
+third_party/wxwidgets/
+
+# Out-of-source build dirs. 'build/' does NOT match 'build-linux/' -- gitignore matches whole
+# path components, so the suffixed variants need naming explicitly.
+build*/

@@ -1,0 +1,102 @@
+/**
+ * Copyright (c) 2024-2026 Opal Kelly Incorporated
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+.okSelectTrigger {
+    /* Layout */
+    display: flex;
+    height: 24px;
+    padding-top: 0rem;
+    padding-top: 0rem;
+    padding-left: 0.5rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0rem;
+    align-self: stretch;
+
+    /* Style */
+    border-radius: 4px;
+    border: 1px solid #444;
+    background: #343434;
+
+    /* Typography */
+    overflow: hidden;
+    color: #FFFFFF;
+    text-overflow: ellipsis;
+    font-family: Inter;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 450;
+    line-height: 1;
+}
+
+.okSelectContent {
+    /* Layout */
+    z-index: 9999;
+
+    /* Style */
+    overflow: hidden;
+    background-color: #000000;
+    border-radius: 4px;
+    box-shadow:
+        0px 10px 38px -10px rgba(22, 23, 24, 0.35),
+        0px 10px 20px -15px rgba(22, 23, 24, 0.2);
+}
+
+.okSelectViewport {
+    /* Layout */
+    padding: 5px;
+}
+
+.okSelectItem {
+    /* Typography */
+    color: #FFFFFF;
+    font-size: 13px;
+    line-height: 1;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    height: 25px;
+    padding: 0 35px 0 25px;
+    position: relative;
+    user-select: none;
+}
+
+.okSelectItem[data-disabled] {
+    color: #999;
+    pointer-events: none;
+}
+
+.okSelectItem[data-highlighted] {
+    outline: none;
+    color: #FFFFFF;
+}
+
+.okSelectLabel {
+    padding: 0 25px;
+    font-size: 12px;
+    line-height: 25px;
+    color: #999;
+}
+
+.okSelectItemIndicator {
+    position: absolute;
+    left: 0;
+    width: 25px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.okSelectScrollButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 25px;
+    background-color: #343434;
+    color:  #999;
+    cursor: default;
+}
