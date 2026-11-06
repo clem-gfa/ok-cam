@@ -36,7 +36,7 @@ public:
     struct DeviceEntry {
         std::string serial;
         std::string productName;
-        bool isClassic = false;            // true = XEM8320 (classic); false = Hub (AXI/GEN3)
+        bool isClassic = false;            // true = XEM8320/XEM8310 (classic); false = Hub (AXI/GEN3)
         std::string cameraModel;           // SYZYGY product model ("" if none)
         DeviceConfiguration config = DeviceConfiguration::XEM8320_TPG;
         CameraMode mode = CameraMode::Tpg;
@@ -67,7 +67,7 @@ public:
 
     // Open a device by serial on a realm, ConfigureFPGA the matching bitfile (resolved from
     // bitfilesRoot), and build the driver stack. Returns false with err set on failure.
-    // modeOverride ("","tpg","pcam","szgcam") forces the mode/bitfile.
+    // modeOverride ("","tpg","pcam","szgcam","imx219") forces the mode/bitfile.
     bool open(const std::string& serial, const std::string& bitfilesRoot, const std::string& realm,
               const std::string& modeOverride, std::string& err);
 

@@ -15,7 +15,7 @@
 namespace okcli {
 
 // Camera operating mode.
-enum class CameraMode { SzgCam, Pcam, Tpg };
+enum class CameraMode { SzgCam, Pcam, Imx219, Tpg };
 
 // Matrix row/column dimensions (a frame size or a skip/binning factor).
 struct MatrixDimensions {
@@ -31,7 +31,7 @@ struct FrameConfiguration {
 };
 
 // Camera exposure. Units are sensor-specific: OV5640 = AEC luminance target (0..247);
-// AR0330 = exposure duration in milliseconds.
+// AR0330 and IMX219 = exposure duration in milliseconds.
 using CameraExposure = double;
 
 // Test pattern modes (all produced by the TPG).

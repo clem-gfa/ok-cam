@@ -17,6 +17,7 @@
 
 #include "ISPDriver.h"
 #include "NullISPDriver.h"
+#include "IMX219CameraControl.h"
 #include "PCAMCameraControl.h"
 #include "SYZYGYCameraControl.h"
 #include "TPGCameraControl.h"
@@ -37,8 +38,15 @@ std::string readCameraModel(OpalKelly::FrontPanel& fp) {
     return model;
 }
 
-DeviceConfiguration configForModeBoard(bool isGen3, CameraMode mode) {
+DeviceConfiguration configForModeBoard(bool isGen3, const std::string& productName,
+                                       CameraMode mode) {
+    if (isXem8310(productName)) {
+        // No SYZYGY port: only the IMX219 on the carrier or the test pattern are available.
+        return mode == CameraMode::Tpg ? DeviceConfiguration::XEM8310_TPG
+                                       : DeviceConfiguration::XEM8310_IMX219;
+    }
     switch (mode) {
+        case CameraMode::Imx219:
         case CameraMode::Tpg:
             return isGen3 ? DeviceConfiguration::HUB1450_TPG : DeviceConfiguration::XEM8320_TPG;
         case CameraMode::Pcam:
@@ -70,7 +78,7 @@ std::vector<GuiCameraBackend::DeviceEntry> GuiCameraBackend::discover(const std:
             e.productName = di.productName;
             e.isClassic = (di.deviceInterface != OK_INTERFACE_GEN3);
             e.cameraModel = readCameraModel(*fp);
-            e.config = determineConfiguration(e.cameraModel, !e.isClassic);
+            e.config = determineConfiguration(e.cameraModel, !e.isClassic, e.productName);
             e.mode = cameraModeFor(e.config);
             out.push_back(std::move(e));
         }
@@ -90,7 +98,7 @@ bool GuiCameraBackend::describe(OpalKelly::FrontPanel& fp, const std::string& se
         out.productName = di.productName;
         out.isClassic = (di.deviceInterface != OK_INTERFACE_GEN3);
         out.cameraModel = readCameraModel(fp);
-        out.config = determineConfiguration(out.cameraModel, !out.isClassic);
+        out.config = determineConfiguration(out.cameraModel, !out.isClassic, out.productName);
         out.mode = cameraModeFor(out.config);
         return true;
     } catch (...) {
@@ -134,14 +142,15 @@ bool GuiCameraBackend::configureAndBuild(const std::string& bitfilesRoot,
         const std::string productName = di.productName;
         const std::string cameraModel = readCameraModel(*m_fp);
 
-        DeviceConfiguration config = determineConfiguration(cameraModel, isGen3);
+        DeviceConfiguration config = determineConfiguration(cameraModel, isGen3, productName);
         CameraMode mode = cameraModeFor(config);
         if (!modeOverride.empty()) {
             if (modeOverride == "tpg") mode = CameraMode::Tpg;
             else if (modeOverride == "pcam") mode = CameraMode::Pcam;
             else if (modeOverride == "szgcam") mode = CameraMode::SzgCam;
+            else if (modeOverride == "imx219") mode = CameraMode::Imx219;
             else { err = "invalid mode '" + modeOverride + "'"; close(); return false; }
-            config = configForModeBoard(isGen3, mode);
+            config = configForModeBoard(isGen3, productName, mode);
         }
 
         const std::string bitfile = bitfilesRoot + "/" + bitfileFor(config);
@@ -162,6 +171,7 @@ bool GuiCameraBackend::configureAndBuild(const std::string& bitfilesRoot,
         switch (mode) {
             case CameraMode::Tpg:    m_control.reset(new TPGCameraControl()); break;
             case CameraMode::Pcam:   m_control.reset(new PCAMCameraControl(axi)); break;
+            case CameraMode::Imx219: m_control.reset(new IMX219CameraControl(axi)); break;
             case CameraMode::SzgCam: m_control.reset(new SYZYGYCameraControl(axi)); break;
         }
         m_seq.reset(new CapturePipelineSequencer(axi, *m_transport.axiStream, mode, *m_isp, *m_tpg,

@@ -7,7 +7,7 @@
 #define XF_NPPC          XF_NPPC4
 #define XF_WIDTH         1920
 #define XF_HEIGHT        1080
-#define XF_BAYER_PATTERN XF_BAYER_BG
+#define XF_BAYER_PATTERN XF_BAYER_RG  // IMX219 (no flip) outputs RGGB; the OV5640 design used XF_BAYER_BG
 
 #define XF_SRC_T         XF_8UC1
 #define XF_DST_T         XF_8UC3

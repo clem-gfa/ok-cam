@@ -37,6 +37,8 @@ enum class DeviceConfiguration {
     HUB1450_SZG_Camera,  // SZG-HUB1450-AU10P + SZG-CAMERA (AR0330), AXI driver, szgcam bitfile
     HUB1450_PCAM,        // SZG-HUB1450-AU10P + SZG-MIPI/Pcam (OV5640), AXI driver, pcam bitfile
     HUB1450_TPG,         // SZG-HUB1450-AU10P, no camera, AXI driver, nocam bitfile, TPG mode
+    XEM8310_IMX219,      // XEM8310-AU25P on the DARWIN carrier + Pi Camera v2 (IMX219), classic bridge, imx219 bitfile
+    XEM8310_TPG,         // XEM8310-AU25P, no camera, classic bridge, nocam bitfile, TPG mode
 };
 
 // CameraMode (szgcam/pcam/tpg) is defined in CameraTypes.h.
@@ -52,6 +54,11 @@ constexpr char SZG_MIPI_8320[]     = "SZG-MIPI-8320";
 // Board product names as reported by okTDeviceInfo.productName.
 constexpr char kProductXEM8320[]  = "XEM8320-AU25P";
 constexpr char kProductHUB1450[]  = "SZG-HUB1450-AU10P";
+constexpr char kProductXEM8310[]  = "XEM8310-AU25P";
+
+// The XEM8310 has no SYZYGY port: the IMX219 sits on the carrier board's FFC connector, so there is
+// no EEPROM to read the camera model from. Boards with this product name default to the IMX219.
+inline bool isXem8310(const std::string& productName) { return productName == kProductXEM8310; }
 
 // The SYZYGY setting key + port the camera lives on (Port "A" for both boards).
 constexpr char kSyzygyProductModelKey[] = "SYZYGY0_PRODUCT_MODEL";
@@ -70,7 +77,9 @@ inline bool productModelToCameraModel(const std::string& modelName, std::string&
 
 // determineConfiguration(): the core selection logic. `cameraModel` is the recognized
 // camera string ("" if none/unsupported); `isGen3` is true for the SZG-HUB1450 (AXI device).
-inline DeviceConfiguration determineConfiguration(const std::string& cameraModel, bool isGen3) {
+inline DeviceConfiguration determineConfiguration(const std::string& cameraModel, bool isGen3,
+                                                  const std::string& productName = "") {
+    if (isXem8310(productName)) return DeviceConfiguration::XEM8310_IMX219;
     if (!cameraModel.empty()) {
         if (isGen3) {
             if (cameraModel == CameraProductModel::SZG_MIPI_8320) return DeviceConfiguration::HUB1450_PCAM;
@@ -92,6 +101,8 @@ inline std::string bitfileFor(DeviceConfiguration config) {
         case DeviceConfiguration::HUB1450_SZG_Camera: return "SZG-HUB1450-AU10P/camera_szgcam.bit";
         case DeviceConfiguration::HUB1450_PCAM:       return "SZG-HUB1450-AU10P/camera_pcam.bit";
         case DeviceConfiguration::HUB1450_TPG:        return "SZG-HUB1450-AU10P/camera_nocam.bit";
+        case DeviceConfiguration::XEM8310_IMX219:     return "XEM8310-AU25P/camera_imx219.bit";
+        case DeviceConfiguration::XEM8310_TPG:        return "XEM8310-AU25P/camera_nocam.bit";
     }
     return "";
 }
@@ -100,6 +111,7 @@ inline std::string bitfileFor(DeviceConfiguration config) {
 inline std::string boardSubdir(const std::string& productName) {
     if (productName == kProductXEM8320) return "XEM8320-AU25P";
     if (productName == kProductHUB1450) return "SZG-HUB1450-AU10P";
+    if (productName == kProductXEM8310) return "XEM8310-AU25P";
     return "";
 }
 
@@ -117,7 +129,9 @@ inline CameraMode cameraModeFor(DeviceConfiguration config) {
         case DeviceConfiguration::HUB1450_SZG_Camera: return CameraMode::SzgCam;
         case DeviceConfiguration::XEM8320_PCAM:
         case DeviceConfiguration::HUB1450_PCAM:       return CameraMode::Pcam;
+        case DeviceConfiguration::XEM8310_IMX219:     return CameraMode::Imx219;
         case DeviceConfiguration::XEM8320_TPG:
+        case DeviceConfiguration::XEM8310_TPG:
         case DeviceConfiguration::HUB1450_TPG:        return CameraMode::Tpg;
     }
     return CameraMode::Tpg;
@@ -133,6 +147,8 @@ inline const char* toString(DeviceConfiguration c) {
         case DeviceConfiguration::HUB1450_SZG_Camera: return "HUB1450_SZG_Camera";
         case DeviceConfiguration::HUB1450_PCAM:       return "HUB1450_PCAM";
         case DeviceConfiguration::HUB1450_TPG:        return "HUB1450_TPG";
+        case DeviceConfiguration::XEM8310_IMX219:     return "XEM8310_IMX219";
+        case DeviceConfiguration::XEM8310_TPG:        return "XEM8310_TPG";
     }
     return "?";
 }
@@ -141,6 +157,7 @@ inline const char* toString(CameraMode m) {
     switch (m) {
         case CameraMode::SzgCam: return "szgcam";
         case CameraMode::Pcam:   return "pcam";
+        case CameraMode::Imx219: return "imx219";
         case CameraMode::Tpg:    return "tpg";
     }
     return "?";
@@ -151,6 +168,7 @@ inline const char* cameraModeFriendly(CameraMode m) {
     switch (m) {
         case CameraMode::SzgCam: return "SZG-Camera";
         case CameraMode::Pcam:   return "SZG-MIPI-8320";
+        case CameraMode::Imx219: return "Pi Camera v2 (IMX219)";
         case CameraMode::Tpg:    return "Test Pattern";
     }
     return "?";

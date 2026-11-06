@@ -75,6 +75,7 @@ inline ExposureUi exposureUiFor(okcli::CameraMode m) {
     switch (m) {
         case okcli::CameraMode::SzgCam: return ExposureUi::ShutterSpeed;
         case okcli::CameraMode::Pcam:   return ExposureUi::AecTarget;
+        case okcli::CameraMode::Imx219: return ExposureUi::ShutterSpeed;  // exposure time in ms, like the AR0330
         case okcli::CameraMode::Tpg:    return ExposureUi::None;
     }
     return ExposureUi::None;

@@ -11,7 +11,7 @@ Not yet verified on hardware / to check before building:
 
 - `CONFIG.BOARD {XEM8310-AU25P}` is accepted by the FrontPanel Vivado IP Core (version-dependent).
 - `C_HS_SETTLE_NS` (set to 120 ns, mid-range for 912 Mb/s) - tune with an ILA on the CSI-2 RX.
-- ISP Bayer pattern (`HLS/ISP/xf_isp_accel_config.h`, still `XF_BAYER_BG` from the OV5640 design).
+- ISP Bayer pattern: set to `XF_BAYER_RG` (IMX219 RGGB without flip, from the Linux driver); confirm on a real image and regenerate the HLS IP.
 - DDR4 IP parameters for 2 x MT40A512M16LY-075 (32-bit) after regenerating the IP.
 
 ---
