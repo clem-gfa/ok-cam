@@ -52,10 +52,13 @@ set_property -dict [list \
 #----------------------------------------------------------------------
 # Set IP Repositories
 #----------------------------------------------------------------------
+# HLS IP repositories. By default the HLS folder next to this script; set 'hls_ip_repos' (a list of
+# directories) before sourcing to use IP generated elsewhere, e.g. on a short path because of the
+# 260-character Windows path limit: set hls_ip_repos {C:/H/isp C:/H/hist}
+if {![info exists hls_ip_repos]} { set hls_ip_repos [list ./HLS] }
 set ip_paths {}
-lappend ip_paths \
-[list ./HLS] \
-$fpdir
+foreach r $hls_ip_repos { lappend ip_paths $r }
+lappend ip_paths $fpdir
 
 set_property ip_repo_paths $ip_paths [current_project]
 update_ip_catalog
