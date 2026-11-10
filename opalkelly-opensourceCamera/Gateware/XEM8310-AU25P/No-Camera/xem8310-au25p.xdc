@@ -1,7 +1,8 @@
 ############################################################################
 # XEM8310-AU25P - AMD constraints file
 # Derived from the XEM8320-AU25P constraints (Copyright (c) 2025 Opal Kelly Incorporated).
-# Pin locations taken from XEM8310-AU25P-A03-Schematic.pdf and DARWIN.pdf (carrier board).
+# Pin locations taken from XEM8310-AU25P-A03-Schematic.pdf and DARWIN.pdf (carrier board);
+# the 71 DDR4 pins were cross-checked against the Opal Kelly xem8310.xdc template (no difference).
 ############################################################################
 
 set_property CFGBVS GND [current_design]
@@ -11,6 +12,8 @@ set_property BITSTREAM.GENERAL.COMPRESS True [current_design]
 # DDR4 reference clock: DSC1123DI2-100.0000 (100 MHz LVDS), bank 66 (IO_L12P/N_T1U_N10/11_GC_66)
 set_property PACKAGE_PIN J23 [get_ports {ddr4_refclk_clk_p}]
 set_property IOSTANDARD LVDS [get_ports {ddr4_refclk_clk_p}]
+# AC-coupled with an on-board bias network (XEM8310 schematic sheet 6): no internal termination.
+set_property DIFF_TERM FALSE [get_ports {ddr4_refclk_clk_p}]
 create_clock -period 10 -name refclk [get_ports ddr4_refclk_clk_p]
 
 # ----------------------- DDR4 (2 x MT40A512M16LY-075, 32 bits, banks 66/67) -----------------------

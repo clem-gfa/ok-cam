@@ -2,7 +2,7 @@
 
 Port of `XEM8320-AU25P/SZG-MIPI-8320`. Differences from the XEM8320 design:
 
-- Constraints: `xem8310-au25p.xdc` (DDR4 on banks 66/67, 32 bits; pins from the XEM8310-A03 schematic).
+- Constraints: `xem8310-au25p.xdc` (DDR4 on banks 66/67, 32 bits; pins from the XEM8310-A03 schematic, verified against the Opal Kelly xem8310.xdc template).
 - MIPI D-PHY on bank 67 (MC3): CLK `A17/A18`, DATA0 `B15/A15`, DATA1 `A19/A20`; line rate 912 Mb/s.
 - I2C (`B84_L1N`/`B84_L9P`) and `pcam_power_en` (`B84_L3N`) in bank 84 at **LVCMOS18**.
 - **VIO2 must be set to 1.8 V** on the XEM8310 (the DARWIN level translators are powered from +1.8 V).
