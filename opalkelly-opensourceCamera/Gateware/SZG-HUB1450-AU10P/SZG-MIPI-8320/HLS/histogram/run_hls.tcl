@@ -6,7 +6,8 @@
 set XF_VITIS_VISION_PATH "C:/work/Vitis_Libraries/vision/L1/include"
 # Override with the XF_VITIS_VISION_PATH environment variable (path to vision/L1/include) if set.
 if {[info exists ::env(XF_VITIS_VISION_PATH)] && $::env(XF_VITIS_VISION_PATH) ne ""} {
-    set XF_VITIS_VISION_PATH [file normalize $::env(XF_VITIS_VISION_PATH)]
+    # Strip any quotes/spaces cmd.exe may have kept in the value, then normalise the slashes.
+    set XF_VITIS_VISION_PATH [file normalize [string trim $::env(XF_VITIS_VISION_PATH) "\"' "]]
 }
 set XPART xcau10p-ffvb676-1-e
 
