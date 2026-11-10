@@ -22,7 +22,7 @@ if {![info exists fpdir]} {
 #----------------------------------------------------------------------
 
 set project_name "Camera"
-set project_dir  "Vivado"
+if {![info exists project_dir]} { set project_dir "Vivado" }
 
 start_gui
 create_project $project_name $project_dir -part xcau25p-ffvb676-2-e

@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #include <thread>
 
 #include "ISPDriver.h"
@@ -144,13 +146,26 @@ bool GuiCameraBackend::configureAndBuild(const std::string& bitfilesRoot,
 
         DeviceConfiguration config = determineConfiguration(cameraModel, isGen3, productName);
         CameraMode mode = cameraModeFor(config);
-        if (!modeOverride.empty()) {
-            if (modeOverride == "tpg") mode = CameraMode::Tpg;
-            else if (modeOverride == "pcam") mode = CameraMode::Pcam;
-            else if (modeOverride == "szgcam") mode = CameraMode::SzgCam;
-            else if (modeOverride == "imx219") mode = CameraMode::Imx219;
-            else { err = "invalid mode '" + modeOverride + "'"; close(); return false; }
+        // Mode selection: explicit override, else OKCAM_MODE ("tpg","pcam","szgcam","imx219").
+        std::string modeSel = modeOverride;
+        if (modeSel.empty()) {
+            if (const char* env = std::getenv("OKCAM_MODE")) modeSel = env;
+        }
+        if (!modeSel.empty()) {
+            if (modeSel == "tpg") mode = CameraMode::Tpg;
+            else if (modeSel == "pcam") mode = CameraMode::Pcam;
+            else if (modeSel == "szgcam") mode = CameraMode::SzgCam;
+            else if (modeSel == "imx219") mode = CameraMode::Imx219;
+            else { err = "invalid mode '" + modeSel + "'"; close(); return false; }
             config = configForModeBoard(isGen3, productName, mode);
+        } else if (config == DeviceConfiguration::XEM8310_IMX219) {
+            // Bring-up: the XEM8310 has no SYZYGY EEPROM to tell whether a camera is fitted. While
+            // the IMX219 bitfile has not been built yet, fall back to the test-pattern bitfile.
+            std::error_code fsErr;
+            if (!std::filesystem::exists(bitfilesRoot + "/" + bitfileFor(config), fsErr)) {
+                config = DeviceConfiguration::XEM8310_TPG;
+                mode = CameraMode::Tpg;
+            }
         }
 
         const std::string bitfile = bitfilesRoot + "/" + bitfileFor(config);
