@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -156,7 +157,13 @@ public:
     }
 
     // Start streaming now that the pipeline is up.
+    // OKCAM_NOSTREAM=1 keeps the sensor in standby (bring-up: compare the D-PHY lane states with
+    // and without the sensor transmitting).
     void afterPipelineStart() override {
+        if (const char* ns = std::getenv("OKCAM_NOSTREAM"); ns && *ns && std::string(ns) != "0") {
+            std::fprintf(stderr, "[IMX219] OKCAM_NOSTREAM set: sensor left in standby\n");
+            return;
+        }
         if (!m_streaming) {
             w8(REG_MODE_SELECT, 0x01);
             m_streaming = true;
