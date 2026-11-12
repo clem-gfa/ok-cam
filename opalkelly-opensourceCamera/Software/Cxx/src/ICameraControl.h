@@ -45,6 +45,13 @@ public:
 
     // Bring-up aid: print the sensor's state to stderr. No-op unless a control overrides it.
     virtual void dumpDiagnostics() {}
+
+    // Sequencing hooks, called by the CapturePipelineSequencer around the pipeline's system reset.
+    // beforePipelineReset(): I2C is still valid, the pipeline is about to be stopped/reset.
+    // afterPipelineStart(): the pipeline (including the receiver) is up and waiting for video.
+    // Sensors whose MIPI link must be (re)started after the receiver is ready override these.
+    virtual void beforePipelineReset() {}
+    virtual void afterPipelineStart() {}
 };
 
 }  // namespace okcli

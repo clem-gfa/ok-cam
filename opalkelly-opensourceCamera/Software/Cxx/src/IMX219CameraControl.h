@@ -60,9 +60,7 @@ public:
     MatrixDimensions frameDimensions() const override { return m_frameDimensions; }
     CameraExposure exposure() const override { return m_exposure; }
 
-    // Full sensor setup; leaves the sensor streaming (as the OV5640 control does). The sensor's
-    // MIPI clock lane is non-continuous (LP-11 between bursts), so the CSI-2 RX can be reset
-    // afterwards by the sequencer and re-synchronises on the next frame start.
+    // Full sensor setup; leaves the sensor in software standby (see afterPipelineStart()).
     void initialize() override {
         m_i2c.initialize();
 
@@ -113,7 +111,11 @@ public:
         w16(REG_DIGITAL_GAIN, 0x0100);
         setExposure(m_exposure > 0 ? m_exposure : kDefaultExposureMs);
 
-        w8(REG_MODE_SELECT, 0x01);  // streaming
+        // The sensor stays in standby here. It is started by afterPipelineStart(), once the CSI-2
+        // receiver has been reset and is idle: the D-PHY must see the lanes in LP-11 and then the
+        // start-of-transmission sequence after its reset, which cannot happen if the sensor is
+        // already streaming (particularly with a continuous clock lane).
+        m_streaming = false;
 
         m_size = kDefaultSize();
         m_frameDimensions = calculateFrameDimensions(m_size, m_skips);
@@ -144,6 +146,22 @@ public:
     }
 
     void reinitializeI2C() override { m_i2c.initialize(); }
+
+    // Put the sensor back in standby before the receiver is reset, so that it restarts cleanly.
+    void beforePipelineReset() override {
+        if (m_streaming) {
+            w8(REG_MODE_SELECT, 0x00);
+            m_streaming = false;
+        }
+    }
+
+    // Start streaming now that the pipeline is up.
+    void afterPipelineStart() override {
+        if (!m_streaming) {
+            w8(REG_MODE_SELECT, 0x01);
+            m_streaming = true;
+        }
+    }
 
     // Read-only helper for bring-up: sensor model id (0x0219 when the I2C link works).
     uint16_t readChipId() { return m_i2c.read16(DEV, REG_CHIP_ID); }
@@ -238,6 +256,7 @@ private:
     MatrixDimensions m_skips;
     MatrixDimensions m_frameDimensions;
     CameraExposure m_exposure = 0;
+    bool m_streaming = false;
 };
 
 }  // namespace okcli

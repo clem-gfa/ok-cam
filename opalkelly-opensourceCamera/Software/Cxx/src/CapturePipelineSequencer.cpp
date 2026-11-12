@@ -128,6 +128,27 @@ void CapturePipelineSequencer::dumpDiagnostics(const char* label) {
                      rd(0x3c), rd(0x40), rd(0x44));
         std::fprintf(stderr, "[CSI2RX] vc0_image_info1=0x%08x (line count / byte count) "
                              "vc0_image_info2=0x%08x (data type)\n", rd(0x60), rd(0x64));
+
+        // MIPI D-PHY register block of the subsystem (offset 0x1000; AMD xdphy driver / PG202).
+        try {
+            auto dp = [&](uint32_t off) { return rd(0x1000 + off); };
+            const uint32_t ctrl = dp(0x00), cl = dp(0x18), d0 = dp(0x1c), d1 = dp(0x20);
+            std::fprintf(stderr, "[DPHY] ctrl=0x%08x (dphy_en=%u) init_timer=%u ns hs_settle_l0=%u l1=%u\n",
+                         ctrl, (ctrl >> 1) & 1, dp(0x08), dp(0x30), dp(0x48));
+            std::fprintf(stderr,
+                         "[DPHY] clock lane: status=0x%08x mode=%u ulps=%u init_done=%u stop=%u ctrl_err=%u\n",
+                         cl, cl & 3, (cl >> 2) & 1, (cl >> 3) & 1, (cl >> 4) & 1, (cl >> 5) & 1);
+            const uint32_t d[2] = {d0, d1};
+            for (int i = 0; i < 2; ++i) {
+                std::fprintf(stderr,
+                             "[DPHY] data lane %d: status=0x%08x packets=%u calib_done=%u stop=%u "
+                             "hs_abort=%u esc_abort=%u init_done=%u mode=%u\n",
+                             i, d[i], d[i] >> 16, (d[i] >> 7) & 1, (d[i] >> 6) & 1, (d[i] >> 4) & 1,
+                             (d[i] >> 5) & 1, (d[i] >> 3) & 1, d[i] & 3);
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[DPHY] registers not readable: %s\n", e.what());
+        }
     }
     std::fprintf(stderr, "[VDMA] s2mm_status=0x%08x mm2s_status=0x%08x\n",
                  m_vdma.getWriteChannelStatus(), m_vdma.getReadChannelStatus());
@@ -145,12 +166,14 @@ void CapturePipelineSequencer::reconfigurePipeline() {
     const uint32_t buf2 = buf1 + frameSize;
 
     try {
+        m_cameraControl.beforePipelineReset();
         stopPipeline();
         m_cameraControl.reinitializeI2C();
         configureIPs(width, height);
         startupPipeline(horizontalSizeBytes, height, buf0, buf1, buf2, width);
         m_pipelineRunning = true;
         m_cameraControl.setExposure(m_cameraControl.exposure());
+        m_cameraControl.afterPipelineStart();
     } catch (...) {
         m_pipelineRunning = false;
         throw;
