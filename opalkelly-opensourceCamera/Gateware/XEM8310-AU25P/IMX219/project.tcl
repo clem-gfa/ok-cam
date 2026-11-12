@@ -147,9 +147,14 @@ if { [catch {set axi_reset_iwrap_0 [create_bd_cell -type module -reference $bloc
 
 # Create instance: clk_wiz_0, and set properties
 set clk_wiz_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz clk_wiz_0 ]
+# CLKOUT1 drives the MIPI D-PHY 'dphy_clk_200M'. The D-PHY's internal PLL multiplies it by 7.5
+# (VCO = 1500 MHz at exactly 200 MHz, which is the upper limit of its 750-1500 MHz range), so a
+# clock even slightly above 200 MHz violates DRC AVAL-350. With a 100.8 MHz input (okClk) the
+# wizard cannot make exactly 200 MHz and yields 200.0128 MHz (VCO 1500.096 MHz). 199.92 / 99.96 MHz
+# are exactly reachable (MMCM VCO 999.6 MHz) and keep the D-PHY PLL in range (1499.4 MHz).
 set_property -dict [list \
-CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {200} \
-CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {100} \
+CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {199.92} \
+CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {99.96} \
 CONFIG.CLKOUT2_USED {true} \
 CONFIG.PRIM_IN_FREQ {100.8} \
 CONFIG.PRIM_SOURCE {No_buffer} \
