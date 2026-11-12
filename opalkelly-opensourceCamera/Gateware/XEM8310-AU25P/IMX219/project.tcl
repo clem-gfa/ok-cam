@@ -24,6 +24,12 @@ if {![info exists fpdir]} {
 set project_name "Camera"
 if {![info exists project_dir]} { set project_dir "Vivado" }
 
+# MIPI D-PHY line rate per lane in Mb/s (912 = IMX219 2-lane 1080p30). Set 'mipi_line_rate' (and
+# optionally 'mipi_hs_settle_ns') before sourcing this script to build a reduced-rate bring-up
+# bitfile, e.g.: set mipi_line_rate 456. The sensor side is switched with OKCAM_HALF_RATE=1.
+if {![info exists mipi_line_rate]} { set mipi_line_rate 912 }
+if {![info exists mipi_hs_settle_ns]} { set mipi_hs_settle_ns [expr {$mipi_line_rate <= 500 ? 130 : 120}] }
+
 start_gui
 create_project $project_name $project_dir -part xcau25p-ffvb676-2-e
 
@@ -274,14 +280,14 @@ CONFIG.CMN_PXL_FORMAT {RAW10} \
 CONFIG.CSI_CONTROLLER_REG_IF {true} \
 CONFIG.C_DPHY_LANES {2} \
 CONFIG.C_EXDES_BOARD {SP701} \
-CONFIG.C_HS_LINE_RATE {912} \
-CONFIG.C_HS_SETTLE_NS {120} \
+CONFIG.C_HS_LINE_RATE $mipi_line_rate \
+CONFIG.C_HS_SETTLE_NS $mipi_hs_settle_ns \
 CONFIG.DATA_LANE0_IO_LOC {B15} \
 CONFIG.DATA_LANE0_IO_LOC_NAME {IO_L17P_T2U_N8_AD10P_67} \
 CONFIG.DATA_LANE1_IO_LOC {A19} \
 CONFIG.DATA_LANE1_IO_LOC_NAME {IO_L18P_T2U_N10_AD2P_67} \
 CONFIG.DPY_EN_REG_IF {true} \
-CONFIG.DPY_LINE_RATE {912} \
+CONFIG.DPY_LINE_RATE $mipi_line_rate \
 CONFIG.HP_IO_BANK_SELECTION {67} \
 CONFIG.SupportLevel {1} \
 CONFIG.VFB_TU_WIDTH {2} \

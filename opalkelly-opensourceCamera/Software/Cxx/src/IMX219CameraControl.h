@@ -95,13 +95,22 @@ public:
         w16(REG_EXCK_FREQ, 24 * 256);
 
         // 2-lane PLL setup: VT 456 MHz (182.4 Mpix/s), OP 912 MHz (912 Mb/s per lane).
-        w8(REG_VTPXCK_DIV, 5);
+        // OKCAM_HALF_RATE=1 (bring-up): 456 Mb/s per lane and half the pixel rate (91.2 Mpix/s,
+        // 15 fps) -- needs a bitfile built with mipi_line_rate 456.
+        m_pixelRateHz = PIXEL_RATE_HZ;
+        const char* hr = std::getenv("OKCAM_HALF_RATE");
+        const bool half = hr && *hr && std::string(hr) != "0";
+        if (half) {
+            m_pixelRateHz = PIXEL_RATE_HZ / 2;
+            std::fprintf(stderr, "[IMX219] OKCAM_HALF_RATE set: 456 Mb/s per lane, 15 fps\n");
+        }
+        w8(REG_VTPXCK_DIV, half ? 10 : 5);
         w8(REG_VTSYCK_DIV, 1);
         w8(REG_PREPLLCK_VT_DIV, 3);
         w8(REG_PREPLLCK_OP_DIV, 3);
         w16(REG_PLL_VT_MPY, 57);
         w8(REG_OPSYCK_DIV, 1);
-        w16(REG_PLL_OP_MPY, 114);
+        w16(REG_PLL_OP_MPY, half ? 57 : 114);
         w8(REG_CSI_LANE_MODE, 0x01);  // 2 lanes
 
         setupMode1080p();
@@ -133,7 +142,7 @@ public:
     // Exposure in milliseconds -> COARSE_INTEGRATION_TIME in line periods (no AEC on this sensor).
     void setExposure(CameraExposure exposure) override {
         m_exposure = exposure;
-        const double lineUs = LINE_LENGTH_PCK / PIXEL_RATE_HZ * 1e6;
+        const double lineUs = LINE_LENGTH_PCK / m_pixelRateHz * 1e6;
         long lines = std::lround((exposure * 1000.0) / lineUs);
         lines = std::max<long>(EXPOSURE_MIN_LINES, std::min<long>(FRAME_LENGTH_LINES - 4, lines));
         w16(REG_COARSE_INTEGRATION_TIME, static_cast<uint16_t>(lines));
@@ -274,6 +283,7 @@ private:
     MatrixDimensions m_frameDimensions;
     CameraExposure m_exposure = 0;
     bool m_streaming = false;
+    double m_pixelRateHz = PIXEL_RATE_HZ;
 };
 
 }  // namespace okcli
