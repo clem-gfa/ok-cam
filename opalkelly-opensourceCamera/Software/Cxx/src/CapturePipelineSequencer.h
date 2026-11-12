@@ -66,6 +66,10 @@ public:
     // Capture a single frame on demand: discard the stale triple-buffer frame, return the fresh one.
     bool captureOnce(CapturedFrame& out);
 
+    // Bring-up aid (stderr): MIPI CSI-2 RX subsystem + VDMA status, then the sensor's own dump.
+    // Only meaningful for the camera bitfiles (the no-camera design has no CSI-2 RX).
+    void dumpDiagnostics(const char* label);
+
 private:
     void reconfigurePipeline();
     void configureIPs(int width, int height);

@@ -148,6 +148,23 @@ public:
     // Read-only helper for bring-up: sensor model id (0x0219 when the I2C link works).
     uint16_t readChipId() { return m_i2c.read16(DEV, REG_CHIP_ID); }
 
+    // Bring-up aid: sensor state on stderr. FRM_CNT (0x0018) increments with every frame the
+    // sensor produces (0xFF = none yet): if it does not move between two dumps, the sensor is
+    // not streaming; if it moves while the CSI-2 packet count stays at 0, the MIPI link is at fault.
+    void dumpDiagnostics() override {
+        try {
+            std::fprintf(stderr,
+                         "[IMX219] id=0x%04x mode_select=%u lane_mode=%u frm_cnt=%u "
+                         "exposure=%u frame_len=%u line_len=%u\n",
+                         m_i2c.read16(DEV, REG_CHIP_ID), m_i2c.read8(DEV, REG_MODE_SELECT),
+                         m_i2c.read8(DEV, REG_CSI_LANE_MODE), m_i2c.read8(DEV, REG_FRM_CNT),
+                         m_i2c.read16(DEV, REG_COARSE_INTEGRATION_TIME),
+                         m_i2c.read16(DEV, REG_FRM_LENGTH_A), m_i2c.read16(DEV, REG_LINE_LENGTH_A));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[IMX219] diagnostics failed: %s\n", e.what());
+        }
+    }
+
 private:
     static MatrixDimensions kDefaultSize() { return {1080, 1920}; }  // {row, col}
 
@@ -156,6 +173,7 @@ private:
     static constexpr double kDefaultExposureMs = 10.0;
 
     static constexpr uint16_t REG_CHIP_ID = 0x0000;
+    static constexpr uint16_t REG_FRM_CNT = 0x0018;
     static constexpr uint16_t REG_MODE_SELECT = 0x0100;
     static constexpr uint16_t REG_CSI_LANE_MODE = 0x0114;
     static constexpr uint16_t REG_DPHY_CTRL = 0x0128;

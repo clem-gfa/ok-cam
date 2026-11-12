@@ -42,6 +42,9 @@ public:
 
     // Called by the sequencer after a system reset to re-init the AXI IIC IP.
     virtual void reinitializeI2C() = 0;
+
+    // Bring-up aid: print the sensor's state to stderr. No-op unless a control overrides it.
+    virtual void dumpDiagnostics() {}
 };
 
 }  // namespace okcli

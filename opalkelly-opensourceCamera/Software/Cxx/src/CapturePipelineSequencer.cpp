@@ -103,6 +103,37 @@ bool CapturePipelineSequencer::captureOnce(CapturedFrame& out) {
     return captureFrame(out);                // return fresh
 }
 
+void CapturePipelineSequencer::dumpDiagnostics(const char* label) {
+    // MIPI CSI-2 RX subsystem register map (AMD xcsi driver / PG232). Base = BD address segment.
+    constexpr uint64_t CSI_BASE = 0x5d600000ull;
+    auto rd = [&](uint32_t off) { return m_axiLite.read32(CSI_BASE + off); };
+    std::fprintf(stderr, "---- diagnostics (%s) ----\n", label);
+    if (m_cameraMode != CameraMode::Tpg) {
+        const uint32_t ccr = rd(0x00), pcr = rd(0x04), csr = rd(0x10), isr = rd(0x24);
+        std::fprintf(stderr,
+                     "[CSI2RX] core_enable=%u soft_reset=%u active_lanes=%u (reg=%u) max_lanes=%u\n",
+                     ccr & 1, (ccr >> 1) & 1, (pcr & 3) + 1, pcr & 3, ((pcr >> 3) & 3) + 1);
+        std::fprintf(stderr,
+                     "[CSI2RX] status=0x%08x packets=%u reset_in_progress=%u line_buf_full=%u "
+                     "short_fifo_notempty=%u short_fifo_full=%u\n",
+                     csr, csr >> 16, csr & 1, (csr >> 1) & 1, (csr >> 2) & 1, (csr >> 3) & 1);
+        std::fprintf(stderr,
+                     "[CSI2RX] irq_status=0x%08x frame_received=%u stop_state=%u sot_err=%u "
+                     "sot_sync_err=%u ecc2=%u ecc1=%u crc=%u data_id_err=%u wc_err=%u "
+                     "vc0_fsync_err=%u vc0_flvl_err=%u\n",
+                     isr, (isr >> 31) & 1, (isr >> 17) & 1, (isr >> 13) & 1, (isr >> 12) & 1,
+                     (isr >> 11) & 1, (isr >> 10) & 1, (isr >> 9) & 1, (isr >> 8) & 1,
+                     (isr >> 22) & 1, (isr >> 1) & 1, isr & 1);
+        std::fprintf(stderr, "[CSI2RX] clk_lane_info=0x%08x lane0_info=0x%08x lane1_info=0x%08x\n",
+                     rd(0x3c), rd(0x40), rd(0x44));
+        std::fprintf(stderr, "[CSI2RX] vc0_image_info1=0x%08x (line count / byte count) "
+                             "vc0_image_info2=0x%08x (data type)\n", rd(0x60), rd(0x64));
+    }
+    std::fprintf(stderr, "[VDMA] s2mm_status=0x%08x mm2s_status=0x%08x\n",
+                 m_vdma.getWriteChannelStatus(), m_vdma.getReadChannelStatus());
+    m_cameraControl.dumpDiagnostics();
+}
+
 void CapturePipelineSequencer::reconfigurePipeline() {
     const int width = m_width;
     const int height = m_height;

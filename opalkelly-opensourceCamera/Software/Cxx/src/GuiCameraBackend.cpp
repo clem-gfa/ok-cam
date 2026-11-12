@@ -237,6 +237,16 @@ bool GuiCameraBackend::startPipeline(double exposure, int rgain, int ggain, int 
         m_seq->setFrameDimensions(dims);
         m_seq->logicReset();
         m_started = true;
+
+        // Bring-up aid: OKCAM_DEBUG=1 prints the CSI-2 RX / VDMA / sensor state twice, 0.5 s apart,
+        // so counters that should be moving can be compared. Run the app with "2> debug.txt".
+        if (const char* dbg = std::getenv("OKCAM_DEBUG"); dbg && *dbg && std::strcmp(dbg, "0") != 0) {
+            for (const char* label : {"t+0.5 s", "t+1.0 s"}) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                m_seq->dumpDiagnostics(label);
+            }
+            std::fflush(stderr);
+        }
         return true;
     } catch (const AxiError& e) {
         err = e.what();
