@@ -81,7 +81,7 @@ set ddr4 [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:ddr4_rtl:
 
 set ddr4_refclk [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 ddr4_refclk ]
 set_property -dict [ list \
-CONFIG.FREQ_HZ {100000000} \
+CONFIG.FREQ_HZ {100040000} \
 ] $ddr4_refclk
 
 
@@ -156,7 +156,7 @@ CONFIG.c_m_axis_mm2s_tdata_width {96} \
 # Create instance: ddr4_0, and set properties
 set ddr4_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:ddr4 ddr4_0 ]
 set_property -dict [list \
-CONFIG.C0.DDR4_InputClockPeriod {10000} \
+CONFIG.C0.DDR4_InputClockPeriod {9996} \
 CONFIG.C0.DDR4_TimePeriod {833} \
 CONFIG.C0.DDR4_CasLatency {17} \
 CONFIG.C0.DDR4_CasWriteLatency {12} \
