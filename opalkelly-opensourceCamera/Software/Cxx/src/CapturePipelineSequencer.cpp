@@ -160,13 +160,22 @@ void CapturePipelineSequencer::pollLaneStates(int samples) {
     constexpr uint64_t DPHY_BASE = 0x5d600000ull + 0x1000;
     struct Lane { const char* name; uint32_t off; std::map<uint32_t, int> seen; };
     Lane lanes[3] = {{"clock lane ", 0x18, {}}, {"data lane 0", 0x1c, {}}, {"data lane 1", 0x20, {}}};
-    std::map<uint32_t, int> csr;
+    std::map<uint32_t, int> csr, clkinf, l0inf, l1inf;
+    uint32_t isrBefore = 0, isrAfter = 0;
     const auto t0 = std::chrono::steady_clock::now();
     try {
+        // Clear the CSI-2 RX interrupt status (write-1-to-clear), so that events seen during the
+        // sampling window are distinguishable from the ones latched earlier.
+        isrBefore = m_axiLite.read32(0x5d600000ull + 0x24);
+        m_axiLite.write32(0x5d600000ull + 0x24, isrBefore);
         for (int i = 0; i < samples; ++i) {
             for (auto& l : lanes) ++l.seen[m_axiLite.read32(DPHY_BASE + l.off)];
             ++csr[m_axiLite.read32(0x5d600000ull + 0x10) >> 16];  // CSI-2 RX packet count
+            ++clkinf[m_axiLite.read32(0x5d600000ull + 0x3c)];     // controller-level lane info
+            ++l0inf[m_axiLite.read32(0x5d600000ull + 0x40)];
+            ++l1inf[m_axiLite.read32(0x5d600000ull + 0x44)];
         }
+        isrAfter = m_axiLite.read32(0x5d600000ull + 0x24);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[POLL] aborted: %s\n", e.what());
     }
@@ -192,6 +201,18 @@ void CapturePipelineSequencer::pollLaneStates(int samples) {
     std::fprintf(stderr, "[POLL] CSI-2 RX packet counts seen: ");
     for (const auto& kv : csr) std::fprintf(stderr, "%u(x%d) ", kv.first, kv.second);
     std::fprintf(stderr, "\n");
+    auto show = [](const char* n, const std::map<uint32_t, int>& m) {
+        std::fprintf(stderr, "[POLL] CSI-2 RX %s: ", n);
+        for (const auto& kv : m) std::fprintf(stderr, "0x%08x(x%d) ", kv.first, kv.second);
+        std::fprintf(stderr, "\n");
+    };
+    show("clock lane info", clkinf);
+    show("lane 0 info", l0inf);
+    show("lane 1 info", l1inf);
+    std::fprintf(stderr,
+                 "[POLL] CSI-2 RX irq status: before clear=0x%08x, after sampling=0x%08x "
+                 "(stop_state re-latched: %s)\n",
+                 isrBefore, isrAfter, (isrAfter & 0x00020000) ? "YES" : "no");
 }
 
 void CapturePipelineSequencer::reconfigurePipeline() {
