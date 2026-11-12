@@ -118,6 +118,14 @@ public:
         // already streaming (particularly with a continuous clock lane).
         m_streaming = false;
 
+        // OKCAM_EARLY_STREAM=1 restores the first behaviour (sensor streaming from initialize(),
+        // before the receiver is reset), to compare lane activity with the normal order.
+        if (const char* es = std::getenv("OKCAM_EARLY_STREAM"); es && *es && std::string(es) != "0") {
+            w8(REG_MODE_SELECT, 0x01);
+            m_streaming = true;
+            std::fprintf(stderr, "[IMX219] OKCAM_EARLY_STREAM set: streaming started in initialize()\n");
+        }
+
         m_size = kDefaultSize();
         m_frameDimensions = calculateFrameDimensions(m_size, m_skips);
     }
@@ -150,6 +158,8 @@ public:
 
     // Put the sensor back in standby before the receiver is reset, so that it restarts cleanly.
     void beforePipelineReset() override {
+        const char* es = std::getenv("OKCAM_EARLY_STREAM");
+        if (es && *es && std::string(es) != "0") return;  // keep streaming through the reset
         if (m_streaming) {
             w8(REG_MODE_SELECT, 0x00);
             m_streaming = false;
