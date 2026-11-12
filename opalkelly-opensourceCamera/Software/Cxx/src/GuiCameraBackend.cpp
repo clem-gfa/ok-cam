@@ -245,6 +245,8 @@ bool GuiCameraBackend::startPipeline(double exposure, int rgain, int ggain, int 
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 m_seq->dumpDiagnostics(label);
             }
+            // OKCAM_DEBUG=2 also samples the D-PHY lane states repeatedly.
+            if (std::strcmp(dbg, "2") == 0) m_seq->pollLaneStates(200);
             std::fflush(stderr);
         }
         return true;

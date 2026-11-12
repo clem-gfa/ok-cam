@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <map>
 #include <thread>
 
 namespace okcli {
@@ -153,6 +154,44 @@ void CapturePipelineSequencer::dumpDiagnostics(const char* label) {
     std::fprintf(stderr, "[VDMA] s2mm_status=0x%08x mm2s_status=0x%08x\n",
                  m_vdma.getWriteChannelStatus(), m_vdma.getReadChannelStatus());
     m_cameraControl.dumpDiagnostics();
+}
+
+void CapturePipelineSequencer::pollLaneStates(int samples) {
+    constexpr uint64_t DPHY_BASE = 0x5d600000ull + 0x1000;
+    struct Lane { const char* name; uint32_t off; std::map<uint32_t, int> seen; };
+    Lane lanes[3] = {{"clock lane ", 0x18, {}}, {"data lane 0", 0x1c, {}}, {"data lane 1", 0x20, {}}};
+    std::map<uint32_t, int> csr;
+    const auto t0 = std::chrono::steady_clock::now();
+    try {
+        for (int i = 0; i < samples; ++i) {
+            for (auto& l : lanes) ++l.seen[m_axiLite.read32(DPHY_BASE + l.off)];
+            ++csr[m_axiLite.read32(0x5d600000ull + 0x10) >> 16];  // CSI-2 RX packet count
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[POLL] aborted: %s\n", e.what());
+    }
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    std::fprintf(stderr, "---- lane state polling: %d samples in %.0f ms ----\n", samples, ms);
+    for (auto& l : lanes) {
+        for (const auto& kv : l.seen) {
+            const uint32_t s = kv.first;
+            if (l.off == 0x18) {  // clock lane: bit4 = stop state, bit5 = control error
+                std::fprintf(stderr,
+                             "[POLL] %s status=0x%08x x%d  (mode=%u ulps=%u init_done=%u stop=%u ctrl_err=%u)\n",
+                             l.name, s, kv.second, s & 3, (s >> 2) & 1, (s >> 3) & 1, (s >> 4) & 1,
+                             (s >> 5) & 1);
+            } else {              // data lane: bit6 = stop, bit5 = esc abort, bit4 = HS abort
+                std::fprintf(stderr,
+                             "[POLL] %s status=0x%08x x%d  (mode=%u ulps=%u init_done=%u stop=%u "
+                             "hs_abort=%u esc_abort=%u packets=%u)\n",
+                             l.name, s, kv.second, s & 3, (s >> 2) & 1, (s >> 3) & 1, (s >> 6) & 1,
+                             (s >> 4) & 1, (s >> 5) & 1, s >> 16);
+            }
+        }
+    }
+    std::fprintf(stderr, "[POLL] CSI-2 RX packet counts seen: ");
+    for (const auto& kv : csr) std::fprintf(stderr, "%u(x%d) ", kv.first, kv.second);
+    std::fprintf(stderr, "\n");
 }
 
 void CapturePipelineSequencer::reconfigurePipeline() {

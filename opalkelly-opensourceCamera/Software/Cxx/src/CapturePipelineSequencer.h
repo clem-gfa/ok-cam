@@ -70,6 +70,10 @@ public:
     // Only meaningful for the camera bitfiles (the no-camera design has no CSI-2 RX).
     void dumpDiagnostics(const char* label);
 
+    // Bring-up aid (stderr): poll the D-PHY lane status registers `samples` times and print how
+    // often each distinct state is seen (e.g. does a lane ever report stop state, HS or escape mode?).
+    void pollLaneStates(int samples);
+
 private:
     void reconfigurePipeline();
     void configureIPs(int width, int height);
