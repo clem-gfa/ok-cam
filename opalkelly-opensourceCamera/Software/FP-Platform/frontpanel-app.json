@@ -16,6 +16,7 @@
     ],
     "compatibleDevices": [
         "XEM8320-AU25P",
+        "XEM8310-AU25P",
         "SZG-HUB1450-AU10P"
     ],
     "initialContentSize": {

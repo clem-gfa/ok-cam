@@ -14,6 +14,12 @@ The camera app is compatible with the following FPGA module and camera periphera
   * [SZG-CAMERA](https://opalkelly.com/products/szg-camera/) - Port A
   * [SZG-MIPI-8320](https://opalkelly.com/products/szg-mipi-8320/) - Port A
   * No camera (Test Pattern Generator)
+* XEM8310-AU25P with a Raspberry Pi Camera Module 2 (Sony IMX219, MIPI CSI-2, 2 lanes) on the
+  DARWIN carrier board (FFC connector J1; no SYZYGY port). VIO2 must be set to 1.8 V.
+  * Needs `camera_imx219.bit` (built from `Gateware/XEM8310-AU25P/IMX219`, DDR4 in its default
+    16-bit configuration) in `Software/bitfiles/XEM8310-AU25P/`.
+  * The exposure control reads **Exposure (1/s)**; the exposure time is limited to one frame period
+    (1/30 s). Only the 1920x1080 mode is available.
 * [SZG-HUB1450](https://opalkelly.com/products/szg-hub1450/)
   * [SZG-CAMERA](https://opalkelly.com/products/szg-camera/) - Port A
   * [SZG-MIPI-8320](https://opalkelly.com/products/szg-mipi-8320/) - Port A

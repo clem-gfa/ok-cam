@@ -44,6 +44,7 @@ import { TPGDriver } from "./TPGDriver";
 import { CapturePipelineSequencer } from "./CapturePipelineSequencer";
 import { SYZYGYCameraControl } from "./SYZYGYCameraControl";
 import { PCAMCameraControl } from "./PCAMCameraControl";
+import { IMX219CameraControl } from "./IMX219CameraControl";
 import { TPGCameraControl } from "./TPGCameraControl";
 
 interface ProgressProperties { completed: number; total: number; }
@@ -62,7 +63,14 @@ enum DeviceConfiguration {
     HUB1450_PCAM,
     /** SZG-HUB1450-AU10P without camera (AXI driver, nocam bitfile, TPG mode) */
     HUB1450_TPG,
+    /** XEM8310-AU25P on the DARWIN carrier with a Pi Camera v2 (IMX219) (Classic-to-AXI bridge, imx219 bitfile) */
+    XEM8310_IMX219,
+    /** XEM8310-AU25P without camera (Classic-to-AXI bridge, nocam bitfile, TPG mode) */
+    XEM8310_TPG,
 }
+
+/** Product name of the XEM8310 (no SYZYGY port: the IMX219 sits on the carrier board's FFC connector). */
+const PRODUCT_XEM8310 = "XEM8310-AU25P";
 
 const BITFILE_MAP: Record<DeviceConfiguration, string> = {
     [DeviceConfiguration.XEM8320_SZG_Camera]: "XEM8320-AU25P/camera_szgcam.bit",
@@ -71,6 +79,8 @@ const BITFILE_MAP: Record<DeviceConfiguration, string> = {
     [DeviceConfiguration.HUB1450_SZG_Camera]: "SZG-HUB1450-AU10P/camera_szgcam.bit",
     [DeviceConfiguration.HUB1450_PCAM]: "SZG-HUB1450-AU10P/camera_pcam.bit",
     [DeviceConfiguration.HUB1450_TPG]: "SZG-HUB1450-AU10P/camera_nocam.bit",
+    [DeviceConfiguration.XEM8310_IMX219]: "XEM8310-AU25P/camera_imx219.bit",
+    [DeviceConfiguration.XEM8310_TPG]: "XEM8310-AU25P/camera_nocam.bit",
 };
 
 const DeviceWorkQueue = new WorkQueue();
@@ -94,6 +104,8 @@ const CAMERA_MODE_MAP: Record<DeviceConfiguration, CameraMode> = {
     [DeviceConfiguration.HUB1450_SZG_Camera]: "szgcam",
     [DeviceConfiguration.HUB1450_PCAM]: "pcam",
     [DeviceConfiguration.HUB1450_TPG]: "tpg",
+    [DeviceConfiguration.XEM8310_IMX219]: "imx219",
+    [DeviceConfiguration.XEM8310_TPG]: "tpg",
 };
 
 type CameraSystem = {
@@ -153,8 +165,13 @@ function App() {
 
         const determineConfiguration = (
             cameraPeripheral: CameraProductModel | undefined,
-            isGen3: boolean
+            isGen3: boolean,
+            productName: string
         ): DeviceConfiguration | null => {
+            // The XEM8310 has no SYZYGY port to read a camera model from: the IMX219 is on the
+            // carrier board, so this board always runs the IMX219 configuration.
+            if (productName === PRODUCT_XEM8310) return DeviceConfiguration.XEM8310_IMX219;
+
             if (cameraPeripheral) {
                 if (isGen3) {
                     if (cameraPeripheral === CameraProductModel.SZG_MIPI_8320) return DeviceConfiguration.HUB1450_PCAM;
@@ -173,7 +190,9 @@ function App() {
             switch (config) {
                 case DeviceConfiguration.XEM8320_SZG_Camera:
                 case DeviceConfiguration.XEM8320_PCAM:
-                case DeviceConfiguration.XEM8320_TPG: {
+                case DeviceConfiguration.XEM8320_TPG:
+                case DeviceConfiguration.XEM8310_IMX219:
+                case DeviceConfiguration.XEM8310_TPG: {
                     console.log(`Loading Classic data port (${mode})`);
                     const classicDataPort = await device.getFPGADataPortClassic();
                     return {
@@ -248,6 +267,7 @@ function App() {
                     else if (deviceInfo.productName === "SZG-HUB1450-AU10P") {
                         syzygyPortConfig = { syzygyKey: "SYZYGY0_PRODUCT_MODEL", syzygyPortLabel: "A" };
                     }
+                    // The XEM8310 has no SYZYGY port (the IMX219 is on the carrier board): nothing to query.
 
                     const isGen3 = deviceInfo.interfaceType === DeviceInterfaceType.GEN3;
 
@@ -269,11 +289,11 @@ function App() {
                             console.warn(`Unsupported Camera ${cameraPeripheralModel} detected on SYZYGY Port ${syzygyPortConfig.syzygyPortLabel}`);
                         }
                     }
-                    else {
+                    else if (deviceInfo.productName !== PRODUCT_XEM8310) {
                         console.warn(`Unexpected Device Product Name ${deviceInfo.productName}. Unable to query for connected peripherals.`);
                     }
 
-                    config = determineConfiguration(cameraPeripheral, isGen3);
+                    config = determineConfiguration(cameraPeripheral, isGen3, deviceInfo.productName);
                 }
                 catch(error) {
                     console.error(`Failed to query peripherals on Device ${deviceInfo.serialNumber}: \n${error}`);
@@ -329,6 +349,9 @@ function App() {
                         case "szgcam":
                             control = new SYZYGYCameraControl(axiLite);
                             break;
+                        case "imx219":
+                            control = new IMX219CameraControl(axiLite);
+                            break;
                     }
 
                     const sequencer = new CapturePipelineSequencer(axiLite, axiStream, mode, isp, tpg, control, DeviceWorkQueue);
@@ -336,7 +359,7 @@ function App() {
                     setCameraSystem({ sequencer, isp, tpg, control, mode });
                 }
                 catch(error) {
-                    const isTPG = config === DeviceConfiguration.HUB1450_TPG || config === DeviceConfiguration.XEM8320_TPG;
+                    const isTPG = config === DeviceConfiguration.HUB1450_TPG || config === DeviceConfiguration.XEM8320_TPG || config === DeviceConfiguration.XEM8310_TPG;
                     console.error(`Failed to initialize ${isTPG ? "TPG mode on " : ""}Device ${deviceInfo.serialNumber}: \n${error}`);
 
                     device?.close();

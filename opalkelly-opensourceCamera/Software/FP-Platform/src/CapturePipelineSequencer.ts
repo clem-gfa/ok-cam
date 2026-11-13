@@ -65,7 +65,7 @@ export type CaptureHandler = (frame: CapturedFrame) => void | Promise<void>;
  * frames from a source and writes them to DDR memory.
  *
  * Used by both native AXI (SZG-HUB1450-AU10P) and Classic-over-bridge
- * (XEM8320) paths via the IAxiLite / IAxiStream abstractions.
+ * (XEM8320, XEM8310) paths via the IAxiLite / IAxiStream abstractions.
  */
 export class CapturePipelineSequencer {
     private readonly _axiLite: IAxiLite;
@@ -102,7 +102,7 @@ export class CapturePipelineSequencer {
     /**
      * @param axiLite        AXI-Lite interface for sub-driver register access.
      * @param axiStream      AXI-Stream interface for frame/histogram data transfer.
-     * @param cameraMode     Operating mode (szgcam, pcam, tpg).
+     * @param cameraMode     Operating mode (szgcam, pcam, imx219, tpg).
      * @param isp            ISP IP core interface (shared with UI).
      * @param tpg            TPG IP core interface (shared with UI).
      * @param cameraControl  Camera sensor control — called by the sequencer
@@ -374,6 +374,7 @@ export class CapturePipelineSequencer {
         );
 
         try {
+            await this._cameraControl.beforePipelineReset?.();
             await this.stopPipeline();
             await this._cameraControl.reinitializeI2C();
             await this.configureIPs(width, height);
@@ -383,6 +384,7 @@ export class CapturePipelineSequencer {
             console.log("CapturePipelineSequencer: Pipeline running.");
 
             await this._cameraControl.setExposure(this._cameraControl.exposure);
+            await this._cameraControl.afterPipelineStart?.();
         } catch (error) {
             this._pipelineRunning = false;
             throw error;

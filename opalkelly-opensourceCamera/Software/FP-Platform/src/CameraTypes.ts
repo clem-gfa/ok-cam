@@ -6,7 +6,7 @@
  */
 
 /** Discriminant for the camera operating mode. */
-export type CameraMode = "szgcam" | "pcam" | "tpg";
+export type CameraMode = "szgcam" | "pcam" | "imx219" | "tpg";
 
 /**
  * Interface for matrix row and column dimensions.
@@ -68,6 +68,7 @@ export type ExposureUi =
 export function exposureUiFor(mode: CameraMode): ExposureUi {
     switch (mode) {
         case "szgcam":
+        case "imx219": // IMX219: exposure time in ms, like the AR0330
             return "shutter";
         case "pcam":
             return "aec";

@@ -42,4 +42,11 @@ export interface ICameraControl {
 
     // Called by sequencer after system reset to reinitialize the AXI IIC IP
     reinitializeI2C(): Promise<void>;
+
+    // Optional sequencing hooks, called by the sequencer around the pipeline's system reset.
+    // beforePipelineReset(): I2C is still valid, the pipeline is about to be stopped/reset.
+    // afterPipelineStart(): the pipeline (including the MIPI receiver) is up and waiting for video.
+    // Sensors whose MIPI link must be (re)started after the receiver is ready implement these.
+    beforePipelineReset?(): Promise<void>;
+    afterPipelineStart?(): Promise<void>;
 }
