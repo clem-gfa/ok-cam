@@ -21,7 +21,7 @@ set mic_rtl ../Microphones/rtl
 # --- sources -------------------------------------------------------------------------------
 add_files -norecurse [list \
     $mic_rtl/mic_clkgen.v $mic_rtl/pdm_capture.v $mic_rtl/cic_bank.v $mic_rtl/fir_bank.v \
-    $mic_rtl/audio_packetizer.v $mic_rtl/ts_unit.v $mic_rtl/mic_subsystem.v $mic_rtl/fir_coeffs.vh]
+    $mic_rtl/audio_packetizer.v $mic_rtl/ts_unit.v $mic_rtl/mic_subsystem.v $mic_rtl/axis_sof_monitor.v $mic_rtl/fir_coeffs.vh]
 set_property file_type {Verilog Header} [get_files fir_coeffs.vh]
 set_property is_global_include true [get_files fir_coeffs.vh]
 set_property include_dirs [list [file normalize $mic_rtl]] [current_fileset]
@@ -70,10 +70,23 @@ if { [catch {set mic_subsystem_0 [create_bd_cell -type module -reference $block_
    error "Unable to add referenced block mic_subsystem: $errmsg"
 }
 
-# SOF video : a brancher sur un detecteur de debut de trame du flux camera (non fait : tenu a 0, le
-# compteur vcnt de l'en-tete reste a 0). Voir Microphones/README.md.
-set vsof_zero [ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant vsof_zero ]
-set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] $vsof_zero
+# Debut de trame video : detecteur en observateur (interface AXI-Stream « monitor ») sur le flux qui entre
+# dans le VDMA (v_tpg_0 -> axi_vdma_0/S_AXIS_S2MM). Si le branchement de l'observateur echoue dans votre
+# version de Vivado, le SOF est tenu a 0 (l'audio fonctionne, mais vcnt/vts de l'en-tete restent a 0).
+set sof_ok 0
+if { [catch {
+    set sof_mon [ create_bd_cell -type module -reference axis_sof_monitor axis_sof_monitor_0 ]
+    connect_bd_intf_net [get_bd_intf_pins axi_vdma_0/S_AXIS_S2MM] [get_bd_intf_pins axis_sof_monitor_0/mon]
+    connect_bd_net [get_bd_pins clk_wiz_0/clk_out2] [get_bd_pins axis_sof_monitor_0/aclk]
+    connect_bd_net [get_bd_pins axis_sof_monitor_0/sof] [get_bd_pins mic_subsystem_0/vsof]
+    set sof_ok 1
+} sof_err ] } {
+    puts "WARNING add_mics.tcl : detecteur de SOF non branche ($sof_err) ; vsof tenu a 0."
+    catch {delete_bd_objs [get_bd_cells axis_sof_monitor_0]}
+    set vsof_zero [ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant vsof_zero ]
+    set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] $vsof_zero
+    connect_bd_net [get_bd_pins vsof_zero/dout] [get_bd_pins mic_subsystem_0/vsof]
+}
 
 # Ports externes
 set mic_clk  [ create_bd_port -dir O mic_clk ]
@@ -91,7 +104,6 @@ connect_bd_net [get_bd_pins frontpanel_0/okClk] [get_bd_pins clk_wiz_mic/clk_in1
 connect_bd_net [get_bd_pins clk_wiz_mic/clk_out1] [get_bd_pins mic_subsystem_0/clk]
 connect_bd_net [get_bd_pins clk_wiz_mic/locked]   [get_bd_pins mic_subsystem_0/locked]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out2]   [get_bd_pins mic_subsystem_0/vclk]
-connect_bd_net [get_bd_pins vsof_zero/dout]       [get_bd_pins mic_subsystem_0/vsof]
 
 # Pads
 connect_bd_net [get_bd_pins mic_subsystem_0/mic_clk_o]  [get_bd_ports mic_clk]
