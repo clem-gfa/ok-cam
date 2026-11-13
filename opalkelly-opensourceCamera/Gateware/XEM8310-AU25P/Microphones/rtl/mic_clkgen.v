@@ -21,7 +21,7 @@ module mic_clkgen #(
     input  wire       rst,
     input  wire       enable,
     input  wire [7:0] sample_delay,   // SD, en cycles de clk apres le front
-    output reg        mic_clk,
+    (* IOB = "TRUE" *) output reg mic_clk,
     output reg        smp_hi,
     output reg        smp_lo,
     output reg        ce,

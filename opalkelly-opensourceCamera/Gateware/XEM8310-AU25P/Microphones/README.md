@@ -4,7 +4,9 @@ Etat : **etude et prototype** (pas encore de gateware). Contenu :
 
 - `mic_pins.xdc` : contraintes de broches (33 signaux sur le connecteur **MC2** de la XEM8310).
 - `sim/pdm_chain.py` : modele de la chaine de decimation PDM -> PCM (numpy uniquement).
-- `rtl/` : `mic_clkgen.v` (horloge PDM, sequence standard puis ultrason, strobes d'echantillonnage), `pdm_capture.v` (32 lignes -> 64 bits), `cic_bank.v` (64 CIC ordre 5, R=12, 19 bits), `fir_bank.v` (FIR de decimation x2, 73 coefficients Q17 symetriques, 8 voies x 8 canaux, 1 multiplieur par voie), `fir_coeffs.vh` (genere par `sim/gen_fir_coeffs.py`), `audio_packetizer.v` (paquets de 4096 octets pour le PC), `ts_unit.v` (base de temps commune audio/video).
+- `rtl/` : `mic_clkgen.v` (horloge PDM, sequence standard puis ultrason, strobes d'echantillonnage), `pdm_capture.v` (32 lignes -> 64 bits), `cic_bank.v` (64 CIC ordre 5, R=12, 19 bits), `fir_bank.v` (FIR de decimation x2, 73 coefficients Q17 symetriques, 8 voies x 8 canaux, 1 multiplieur par voie), `fir_coeffs.vh` (genere par `sim/gen_fir_coeffs.py`), `audio_packetizer.v` (paquets de 4096 octets pour le PC), `ts_unit.v` (base de temps commune audio/video), `mic_subsystem.v` (assemble le tout derriere des interfaces FrontPanel : WireIn 0x01, WireOut 0x20-0x22, pipe 0xA1).
+- `mic_timing.xdc` : contraintes (faux chemins sur les pads micros, delai reglé par SD).
+- `../IMX219/add_mics.tcl` : ajoute le sous-systeme micros au projet IMX219 (voir « Integration Vivado »).
 - `sim/run.sh [SD] [INVERT]` : simulation iverilog (64 micros modelises avec les timings de la datasheet) + comparaison bit a bit avec le modele Python.
 
 ## Etat de la verification (simulation uniquement, pas encore sur carte)
@@ -12,7 +14,18 @@ Etat : **etude et prototype** (pas encore de gateware). Contenu :
 - Fenetre de delai d'echantillonnage SD (96 MHz) : 0-2 echec, **3 a 8 OK** ; valeur par defaut 7 (a recaler sur la carte, le modele ne connait pas les delais de routage).
 - FIR (`sim/run_fir.sh`) : 64/64 canaux identiques au modele entier, cadence reelle (une entree toutes les 240 cycles a 96 MHz, 336 cycles de calcul pour 480 disponibles). Gain verifie : sinus 0,5 -> crete 3,98 M (attendu 3,98 M), pleine echelle sans depassement des 24 bits.
 - Paquets (`sim/run_audio.sh`) : en-tetes, charge utile, horodatages et abandon de paquets entiers quand le PC ne lit plus (45 paquets source, 9 abandonnes, seq avec trous, flag « perdu » coherent, aucun paquet tronque).
-- Non fait : egalisation par micro, integration Vivado (voir ci-dessous), logiciel PC.
+- Bout en bout (`sim/run_subsystem.sh`) : 64 micros modelises -> `mic_subsystem` -> pipe 0xA1 lue par un « PC » (blocs de 1024 mots) : 6 paquets, 126 instants, **64/64 canaux identiques** au modele (CIC puis FIR entiers), aucun paquet abandonne, statut `0x7` (run, ultra, locked).
+- Non fait : egalisation par micro, logiciel PC, branchement du SOF video.
+
+## Integration Vivado (`IMX219/add_mics.tcl`, NON TESTE sous Vivado)
+```
+set fpdir <chemin du FrontPanel Vivado IP>
+set with_mics 1
+source project.tcl
+```
+Sans `with_mics`, le projet camera est inchange. Le script ajoute : le FIFO audio (horloges independantes, 4096 x 32), une PLL `clk_wiz_mic` (95,5 MHz depuis okClk -> horloge PDM 4,775 MHz, sous le maximum de 4,8 MHz du micro ; fs ~ 199 kS/s), `mic_subsystem`, les endpoints FrontPanel et les ports `mic_clk` / `mic_data[31:0]`, `mic_pins.xdc` et `mic_timing.xdc`. Points a verifier au premier essai : noms des pins d'interface du FrontPanel (`wirein01`, `wireout20..22`, `btpipeouta1`), parametres du FIFO, DRC de banque (VIO3).
+Mise en service : VIO3 = 1,8 V, ecrire WireIn 0x01 = reset (0x2) puis enable | SD<<8 (SD = 7 au depart), lire WireOut 0x20 (bit0 run), puis lire la pipe 0xA1 par blocs de 4096 octets.
+Le SOF video est tenu a 0 (`vcnt` reste 0) : il faut un detecteur de debut de trame sur le flux camera.
 
 ## Transport vers le PC (choix propose)
 Une **seconde pipe FrontPanel a blocs, adresse 0xA1** (`CONFIG.BTPO.COUNT {2}`, `BTPO.ADDR_1 {0xA1}`), alimentee par un FIFO comme `axis_to_btpipeout_shim` (video, 0xA0), avec `space_ok` = FIFO libre >= 1024 mots. Bloc de 4096 octets = 1 paquet. Debit : 21 instants/paquet x 192 octets, ~9,5 k paquets/s = ~39 Mo/s.
