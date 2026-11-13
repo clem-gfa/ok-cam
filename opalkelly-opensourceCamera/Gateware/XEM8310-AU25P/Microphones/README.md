@@ -4,14 +4,21 @@ Etat : **etude et prototype** (pas encore de gateware). Contenu :
 
 - `mic_pins.xdc` : contraintes de broches (33 signaux sur le connecteur **MC2** de la XEM8310).
 - `sim/pdm_chain.py` : modele de la chaine de decimation PDM -> PCM (numpy uniquement).
-- `rtl/` : `mic_clkgen.v` (horloge PDM, sequence standard puis ultrason, strobes d'echantillonnage), `pdm_capture.v` (32 lignes -> 64 bits), `cic_bank.v` (64 CIC ordre 5, R=12, 19 bits), `fir_bank.v` (FIR de decimation x2, 73 coefficients Q17 symetriques, 8 voies x 8 canaux, 1 multiplieur par voie), `fir_coeffs.vh` (genere par `sim/gen_fir_coeffs.py`).
+- `rtl/` : `mic_clkgen.v` (horloge PDM, sequence standard puis ultrason, strobes d'echantillonnage), `pdm_capture.v` (32 lignes -> 64 bits), `cic_bank.v` (64 CIC ordre 5, R=12, 19 bits), `fir_bank.v` (FIR de decimation x2, 73 coefficients Q17 symetriques, 8 voies x 8 canaux, 1 multiplieur par voie), `fir_coeffs.vh` (genere par `sim/gen_fir_coeffs.py`), `audio_packetizer.v` (paquets de 4096 octets pour le PC), `ts_unit.v` (base de temps commune audio/video).
 - `sim/run.sh [SD] [INVERT]` : simulation iverilog (64 micros modelises avec les timings de la datasheet) + comparaison bit a bit avec le modele Python.
 
 ## Etat de la verification (simulation uniquement, pas encore sur carte)
 - Capture + CIC : 64/64 canaux identiques au modele, horloge normale et inversee.
 - Fenetre de delai d'echantillonnage SD (96 MHz) : 0-2 echec, **3 a 8 OK** ; valeur par defaut 7 (a recaler sur la carte, le modele ne connait pas les delais de routage).
 - FIR (`sim/run_fir.sh`) : 64/64 canaux identiques au modele entier, cadence reelle (une entree toutes les 240 cycles a 96 MHz, 336 cycles de calcul pour 480 disponibles). Gain verifie : sinus 0,5 -> crete 3,98 M (attendu 3,98 M), pleine echelle sans depassement des 24 bits.
-- Non fait : egalisation par micro, paquets audio + horodatage, integration Vivado.
+- Paquets (`sim/run_audio.sh`) : en-tetes, charge utile, horodatages et abandon de paquets entiers quand le PC ne lit plus (45 paquets source, 9 abandonnes, seq avec trous, flag « perdu » coherent, aucun paquet tronque).
+- Non fait : egalisation par micro, integration Vivado (voir ci-dessous), logiciel PC.
+
+## Transport vers le PC (choix propose)
+Une **seconde pipe FrontPanel a blocs, adresse 0xA1** (`CONFIG.BTPO.COUNT {2}`, `BTPO.ADDR_1 {0xA1}`), alimentee par un FIFO comme `axis_to_btpipeout_shim` (video, 0xA0), avec `space_ok` = FIFO libre >= 1024 mots. Bloc de 4096 octets = 1 paquet. Debit : 21 instants/paquet x 192 octets, ~9,5 k paquets/s = ~39 Mo/s.
+Format du paquet (1024 mots 32 bits, little-endian) : 8 mots d'en-tete (magic `MIC1`, seq, horodatage 64 bits du 1er instant, nsamp + flags, nombre de debuts de trame video, horodatage du dernier debut de trame video), puis 21 x 48 mots (64 canaux x 24 bits, canal c aux bits [24c +: 24]), puis 8 mots de bourrage. Voir l'en-tete de `rtl/audio_packetizer.v`.
+Synchro video : `ts_unit` mesure, sur la meme horloge que l'audio, le debut de chaque trame video (SOF, hors domaine d'horloge, incertitude de quelques cycles). **A faire** : brancher son `vsof` sur le debut de trame du flux camera (le SOF du flux AXI-Stream vers le VDMA) et exposer la frequence de l'horloge audio (ticks par seconde) sur un registre.
+
 
 ## Parametres retenus (voir datasheet Knowles, rev. B)
 - Mode **ultrason** : horloge 3,072 a 4,8 MHz. Choix : **4,8 MHz**.
