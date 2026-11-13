@@ -109,5 +109,34 @@ def main():
     print(f"\nSNR modele (2e ordre, 100 Hz-80 kHz) : {10*np.log10(sig/noise):.1f} dB (ne reflete pas le micro reel)")
 
 
+# ---------------------------------------------------------------------------------------------
+# Version entiere (celle du RTL) : coefficients Q17 symetriques, sortie = accumulateur >> 12.
+# ---------------------------------------------------------------------------------------------
+COEF_FRAC = 17
+OUT_SHIFT = 12            # CIC gain R^N * 2^17 / 2^12 -> ~0,95 * 2^23 pour un PDM a pleine echelle
+
+
+def fir_q17():
+    """37 coefficients uniques (k = 0..36) du filtre symetrique de 73 coefficients, en Q17."""
+    h = fir_design()
+    assert len(h) == 2 * 36 + 1
+    half = (h[:37] + h[::-1][:37]) / 2
+    return np.round(half * (1 << COEF_FRAC)).astype(np.int64)
+
+
+def fir_int(c, coef=None):
+    """c : sorties entieres du CIC (400 kS/s). Retourne y_full[n] >> 12 pour n pair (200 kS/s)."""
+    coef = fir_q17() if coef is None else coef
+    c = np.asarray(c, dtype=np.int64)
+    x = lambda i: c[i] if 0 <= i < len(c) else 0
+    out = []
+    for n in range(0, len(c), 2):
+        acc = int(coef[36]) * int(x(n - 36))
+        for k in range(36):
+            acc += int(coef[k]) * (int(x(n - k)) + int(x(n - 72 + k)))
+        out.append(acc >> OUT_SHIFT)
+    return np.array(out, dtype=np.int64)
+
+
 if __name__ == "__main__":
     main()
