@@ -27,10 +27,11 @@ if {![info exists project_dir]} { set project_dir "Vivado" }
 # MIPI D-PHY line rate per lane in Mb/s (912 = IMX219 2-lane 1080p30). Set 'mipi_line_rate' (and
 # optionally 'mipi_hs_settle_ns') before sourcing this script to build a reduced-rate bring-up
 # bitfile, e.g.: set mipi_line_rate 456. The sensor side is switched with OKCAM_HALF_RATE=1.
-# DDR4 data width: 32 (both devices, 2 GiB, uses banks 66 and 67) or 16 (first device only,
-# 1 GiB, bank 66 only). In the 32-bit build the D-PHY, which shares bank 67 with the DDR4, does not
-# work (bring-up result); use 16 so that bank 67 is left to the MIPI. Set 'ddr4_width' before sourcing.
-if {![info exists ddr4_width]} { set ddr4_width 32 }
+# DDR4 data width: 16 (default: first device only, 1 GiB, bank 66 only) or 32 (both devices, 2 GiB,
+# banks 66 and 67). With 32 the MIPI D-PHY, which shares bank 67 with the DDR4, does not work
+# (bring-up result: the DDR4 IP sets INTERNAL_VREF on bank 67; without it the D-PHY works), so the
+# default is 16, which leaves bank 67 to the MIPI. Set 'ddr4_width' before sourcing to override.
+if {![info exists ddr4_width]} { set ddr4_width 16 }
 if {$ddr4_width != 16 && $ddr4_width != 32} { error "ddr4_width must be 16 or 32" }
 set ddr4_range [expr {$ddr4_width == 16 ? "0x40000000" : "0x80000000"}]
 set ddr4_xdc   [expr {$ddr4_width == 16 ? "xem8310-au25p_ddr16.xdc" : "xem8310-au25p.xdc"}]

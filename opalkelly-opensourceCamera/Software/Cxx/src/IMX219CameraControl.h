@@ -117,7 +117,7 @@ public:
 
         // Exposure / gain / orientation defaults.
         w8(REG_ORIENTATION, 0x00);  // no flip -> RGGB
-        w8(REG_ANALOG_GAIN, 0);
+        w8(REG_ANALOG_GAIN, analogGainCode());
         w16(REG_DIGITAL_GAIN, 0x0100);
         setExposure(m_exposure > 0 ? m_exposure : kDefaultExposureMs);
 
@@ -254,6 +254,18 @@ private:
     static constexpr int LINE_LENGTH_PCK = 3448;     // 0x0d78 (minimum, kernel default)
     static constexpr int FRAME_LENGTH_LINES = 1763;  // 30 fps at 1920x1080
     static constexpr int EXPOSURE_MIN_LINES = 4;
+
+    // Analogue gain code (register 0x0157): gain = 256 / (256 - code), code 0..232 (1.0x .. 10.67x).
+    // OKCAM_ANALOG_GAIN=<multiplier> (e.g. 4 for 4x) raises the signal before the ADC, which keeps a
+    // short exposure usable in dim light (the ISP's white-balance stretch otherwise amplifies noise).
+    static uint8_t analogGainCode() {
+        const char* e = std::getenv("OKCAM_ANALOG_GAIN");
+        if (!e || !*e) return 0;
+        const double g = std::atof(e);
+        if (g <= 1.0) return 0;
+        const long code = std::lround(256.0 - 256.0 / g);
+        return static_cast<uint8_t>(std::max<long>(0, std::min<long>(232, code)));
+    }
 
     void w8(uint16_t reg, uint8_t data) { m_i2c.write8(DEV, reg, data); }
     void w16(uint16_t reg, uint16_t data) { m_i2c.write16(DEV, reg, data); }  // one 2-byte burst
