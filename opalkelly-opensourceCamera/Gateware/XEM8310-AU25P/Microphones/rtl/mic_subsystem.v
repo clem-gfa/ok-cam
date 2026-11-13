@@ -9,7 +9,8 @@ module mic_subsystem #(
     parameter DIV_ULTRA      = 20,
     parameter STD_PERIODS    = 48000,
     parameter SETTLE_PERIODS = 48000,
-    parameter INVERT_CLK     = 0
+    parameter INVERT_CLK     = 0,
+    parameter BLOCK_WORDS    = 256     // taille de bloc de la pipe (mots 32 bits) : doit valoir le bloc utilise par le PC (1024 octets = 256)
 ) (
     input  wire        clk,
     input  wire        locked,
@@ -81,9 +82,9 @@ module mic_subsystem #(
         .dout(btpo_ep_datain_audio), .full(full), .empty(empty),
         .wr_data_count(wr_cnt), .rd_data_count(rd_cnt));
 
-    // EP_READY : un bloc complet (1024 mots = 4096 octets) est disponible
+    // EP_READY : un bloc complet (BLOCK_WORDS mots) est disponible
     reg rdy;
-    always @(posedge ok_clk) rdy <= (rd_cnt >= 13'd1024);
+    always @(posedge ok_clk) rdy <= (rd_cnt >= BLOCK_WORDS);
     assign btpo_ep_ready_audio = rdy;
 
     // ---- statut (clk -> okClk) ---------------------------------------------------------------

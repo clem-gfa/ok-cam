@@ -10,7 +10,7 @@ module tb_mic_subsystem;
     reg rd = 0;
     wire mic_clk; tri0 [31:0] dat;
 
-    mic_subsystem #(.STD_PERIODS(20), .SETTLE_PERIODS(10)) dut (
+    mic_subsystem #(.STD_PERIODS(20), .SETTLE_PERIODS(10), .BLOCK_WORDS(1024)) dut (
         .clk(clk), .locked(1'b1), .ok_clk(okclk), .vclk(vclk), .vsof(1'b0),
         .wi01_ep_dataout_mic_ctrl(ctrl), .wo20_ep_datain_mic_status(st),
         .wo21_ep_datain_mic_dropped(dropped), .wo22_ep_datain_mic_overruns(overruns),

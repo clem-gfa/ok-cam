@@ -109,6 +109,16 @@ foreach(_addon ${_addon_cmakes})
     include("${_addon}")
 endforeach()
 
+# --- Hardware-free tests (microphone stream decoder / WAV writer) ----------------------
+option(BUILD_TESTS "Build the hardware-free unit tests" OFF)
+if(BUILD_TESTS)
+    enable_testing()
+    add_executable(audio_stream_test tests/audio_stream_test.cpp)
+    target_include_directories(audio_stream_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(audio_stream_test PRIVATE Threads::Threads)
+    add_test(NAME audio_stream_test COMMAND audio_stream_test)
+endif()
+
 # --- Optional wxWidgets GUI ---------------------------------------------------------
 # Off by default. Enable with -DBUILD_GUI=ON.
 option(BUILD_GUI "Build the wxWidgets camera GUI (requires wxWidgets)" OFF)

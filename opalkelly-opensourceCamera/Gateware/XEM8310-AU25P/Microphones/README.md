@@ -15,7 +15,8 @@ Etat : **etude et prototype** (pas encore de gateware). Contenu :
 - FIR (`sim/run_fir.sh`) : 64/64 canaux identiques au modele entier, cadence reelle (une entree toutes les 240 cycles a 96 MHz, 336 cycles de calcul pour 480 disponibles). Gain verifie : sinus 0,5 -> crete 3,98 M (attendu 3,98 M), pleine echelle sans depassement des 24 bits.
 - Paquets (`sim/run_audio.sh`) : en-tetes, charge utile, horodatages et abandon de paquets entiers quand le PC ne lit plus (45 paquets source, 9 abandonnes, seq avec trous, flag « perdu » coherent, aucun paquet tronque).
 - Bout en bout (`sim/run_subsystem.sh`) : 64 micros modelises -> `mic_subsystem` -> pipe 0xA1 lue par un « PC » (blocs de 1024 mots) : 6 paquets, 126 instants, **64/64 canaux identiques** au modele (CIC puis FIR entiers), aucun paquet abandonne, statut `0x7` (run, ultra, locked).
-- Non fait : egalisation par micro, logiciel PC, branchement du SOF video.
+- Logiciel PC (C++, `Software/Cxx/src/AudioStream.h` + `AudioPipe.h`, test `Software/Cxx/tests/audio_stream_test.cpp`, `-DBUILD_TESTS=ON`) : decodage des paquets, fichier **WAV RF64 64 canaux 24 bits** (valide au-dela de 4 Go, relu correctement par `ffprobe`), trous de `seq` remplaces par du silence et comptes, fichier `.csv` des horodatages par paquet (alignement avec la video), fenetre des derniers echantillons pour l'affichage. Teste hors materiel avec une pipe simulee (48 paquets dont 3 perdus). `AudioPipeOverClassicDataPort` (lecture reelle de la pipe 0xA1) n'est pas compile ici (pas de SDK FrontPanel).
+- Non fait : egalisation par micro, interface graphique (formes d'onde), branchement du SOF video.
 
 ## Integration Vivado (`IMX219/add_mics.tcl`, NON TESTE sous Vivado)
 ```
@@ -24,7 +25,7 @@ set with_mics 1
 source project.tcl
 ```
 Sans `with_mics`, le projet camera est inchange. Le script ajoute : le FIFO audio (horloges independantes, 4096 x 32), une PLL `clk_wiz_mic` (95,5 MHz depuis okClk -> horloge PDM 4,775 MHz, sous le maximum de 4,8 MHz du micro ; fs ~ 199 kS/s), `mic_subsystem`, les endpoints FrontPanel et les ports `mic_clk` / `mic_data[31:0]`, `mic_pins.xdc` et `mic_timing.xdc`. Points a verifier au premier essai : noms des pins d'interface du FrontPanel (`wirein01`, `wireout20..22`, `btpipeouta1`), parametres du FIFO, DRC de banque (VIO3).
-Mise en service : VIO3 = 1,8 V, ecrire WireIn 0x01 = reset (0x2) puis enable | SD<<8 (SD = 7 au depart), lire WireOut 0x20 (bit0 run), puis lire la pipe 0xA1 par blocs de 4096 octets.
+Mise en service : VIO3 = 1,8 V, ecrire WireIn 0x01 = reset (0x2) puis enable | SD<<8 (SD = 7 au depart), lire WireOut 0x20 (bit0 run), puis lire la pipe 0xA1 avec le meme bloc que `BLOCK_WORDS` de `mic_subsystem` (defaut 256 mots = 1024 octets, comme la video ; le PC lit des multiples de 4096 octets = 1 paquet).
 Le SOF video est tenu a 0 (`vcnt` reste 0) : il faut un detecteur de debut de trame sur le flux camera.
 
 ## Transport vers le PC (choix propose)
