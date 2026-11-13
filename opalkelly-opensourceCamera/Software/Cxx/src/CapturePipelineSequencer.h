@@ -80,6 +80,11 @@ public:
     // (call after the pipeline is up) and OKCAM_EARLY_STREAM unset.
     void sweepHsSettle();
 
+    // Bring-up aid for the MIPI-only bitfile (project_mipi_only.tcl: no DDR4, no VDMA): reset the AXI
+    // domains (and so the CSI-2 RX), restart the sensor, then print the receiver status and the lane
+    // polling. Never touches the VDMA or the video stream.
+    void mipiOnlyDiagnostics();
+
 private:
     void reconfigurePipeline();
     void configureIPs(int width, int height);
@@ -107,6 +112,7 @@ private:
     int m_width = 0;
     int m_height = 0;
     bool m_pipelineRunning = false;
+    bool m_noVdma = false;  // MIPI-only bitfile: the VDMA does not exist
     int32_t m_prevFrameHash = 0;
 };
 

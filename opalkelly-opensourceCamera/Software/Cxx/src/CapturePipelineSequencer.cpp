@@ -151,8 +151,10 @@ void CapturePipelineSequencer::dumpDiagnostics(const char* label) {
             std::fprintf(stderr, "[DPHY] registers not readable: %s\n", e.what());
         }
     }
-    std::fprintf(stderr, "[VDMA] s2mm_status=0x%08x mm2s_status=0x%08x\n",
-                 m_vdma.getWriteChannelStatus(), m_vdma.getReadChannelStatus());
+    if (!m_noVdma) {
+        std::fprintf(stderr, "[VDMA] s2mm_status=0x%08x mm2s_status=0x%08x\n",
+                     m_vdma.getWriteChannelStatus(), m_vdma.getReadChannelStatus());
+    }
     m_cameraControl.dumpDiagnostics();
 }
 
@@ -213,6 +215,26 @@ void CapturePipelineSequencer::pollLaneStates(int samples) {
                  "[POLL] CSI-2 RX irq status: before clear=0x%08x, after sampling=0x%08x "
                  "(stop_state re-latched: %s)\n",
                  isrBefore, isrAfter, (isrAfter & 0x00020000) ? "YES" : "no");
+}
+
+void CapturePipelineSequencer::mipiOnlyDiagnostics() {
+    m_noVdma = true;
+    std::fprintf(stderr, "---- MIPI-only diagnostics (no DDR4, no VDMA in this bitfile) ----\n");
+    try {
+        m_cameraControl.beforePipelineReset();  // sensor to standby while the receiver is reset
+        m_axiLite.resetSystem();                // resets the AXI domains, CSI-2 RX included
+        sleepMs(100);
+        m_cameraControl.reinitializeI2C();      // the system reset also reset the AXI IIC
+        m_cameraControl.afterPipelineStart();   // sensor streaming
+        sleepMs(500);
+        dumpDiagnostics("mipi-only, 0.5 s after sensor start");
+        sleepMs(500);
+        dumpDiagnostics("mipi-only, 1.0 s after sensor start");
+        pollLaneStates(200);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[MIPI-ONLY] aborted: %s\n", e.what());
+    }
+    std::fflush(stderr);
 }
 
 void CapturePipelineSequencer::sweepHsSettle() {

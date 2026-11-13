@@ -217,6 +217,13 @@ bool GuiCameraBackend::startPipeline(double exposure, int rgain, int ggain, int 
         m_control->initialize();
         m_seq->initializePipeline();
 
+        // OKCAM_MIPI_ONLY=1: bitfile without DDR4/VDMA (project_mipi_only.tcl) -> receiver diagnostics only.
+        if (const char* mo = std::getenv("OKCAM_MIPI_ONLY"); mo && *mo && std::strcmp(mo, "0") != 0) {
+            m_seq->mipiOnlyDiagnostics();
+            err = "OKCAM_MIPI_ONLY: diagnostics written to stderr, no video in this mode";
+            return false;
+        }
+
         m_control->setExposure(exposure);
         m_isp->setGains(static_cast<uint32_t>(rgain), static_cast<uint32_t>(ggain),
                         static_cast<uint32_t>(bgain));
