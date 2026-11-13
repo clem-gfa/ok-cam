@@ -27,6 +27,13 @@ if {![info exists project_dir]} { set project_dir "Vivado" }
 # MIPI D-PHY line rate per lane in Mb/s (912 = IMX219 2-lane 1080p30). Set 'mipi_line_rate' (and
 # optionally 'mipi_hs_settle_ns') before sourcing this script to build a reduced-rate bring-up
 # bitfile, e.g.: set mipi_line_rate 456. The sensor side is switched with OKCAM_HALF_RATE=1.
+# DDR4 data width: 32 (both devices, 2 GiB, uses banks 66 and 67) or 16 (first device only,
+# 1 GiB, bank 66 only). In the 32-bit build the D-PHY, which shares bank 67 with the DDR4, does not
+# work (bring-up result); use 16 so that bank 67 is left to the MIPI. Set 'ddr4_width' before sourcing.
+if {![info exists ddr4_width]} { set ddr4_width 32 }
+if {$ddr4_width != 16 && $ddr4_width != 32} { error "ddr4_width must be 16 or 32" }
+set ddr4_range [expr {$ddr4_width == 16 ? "0x40000000" : "0x80000000"}]
+set ddr4_xdc   [expr {$ddr4_width == 16 ? "xem8310-au25p_ddr16.xdc" : "xem8310-au25p.xdc"}]
 if {![info exists mipi_line_rate]} { set mipi_line_rate 912 }
 if {![info exists mipi_hs_settle_ns]} { set mipi_hs_settle_ns [expr {$mipi_line_rate <= 500 ? 130 : 120}] }
 
@@ -42,7 +49,7 @@ add_files -norecurse { \
 }
 
 # Add constraints
-add_files -fileset constrs_1 -norecurse xem8310-au25p.xdc
+add_files -fileset constrs_1 -norecurse $ddr4_xdc
 
 create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_axis_to_btpipeout_shim
 set_property -dict [list \
@@ -179,7 +186,7 @@ CONFIG.C0.DDR4_TimePeriod {833} \
 CONFIG.C0.DDR4_CasLatency {17} \
 CONFIG.C0.DDR4_CasWriteLatency {12} \
 CONFIG.C0.DDR4_MemoryPart {MT40A512M16LY-075} \
-CONFIG.C0.DDR4_DataWidth {32} \
+CONFIG.C0.DDR4_DataWidth $ddr4_width \
 CONFIG.C0.BANK_GROUP_WIDTH {1} \
 ] $ddr4_0
 
@@ -469,8 +476,8 @@ assign_bd_address -offset 0x55200000 -range 0x00010000 -target_address_space [ge
 assign_bd_address -offset 0x51000000 -range 0x00010000 -target_address_space [get_bd_addr_spaces fp_to_axil_iwrap_0/m_axil] [get_bd_addr_segs histogram_accel_0/s_axi_control/Reg] -force
 assign_bd_address -offset 0x5D600000 -range 0x00002000 -target_address_space [get_bd_addr_spaces fp_to_axil_iwrap_0/m_axil] [get_bd_addr_segs mipi_csi2_rx_subsyst_0/csirxss_s_axi/Reg] -force
 assign_bd_address -offset 0x59400000 -range 0x00010000 -target_address_space [get_bd_addr_spaces fp_to_axil_iwrap_0/m_axil] [get_bd_addr_segs v_tpg_0/s_axi_CTRL/Reg] -force
-assign_bd_address -offset 0x80000000 -range 0x80000000 -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_MM2S] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
-assign_bd_address -offset 0x80000000 -range 0x80000000 -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_S2MM] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
+assign_bd_address -offset 0x80000000 -range $ddr4_range -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_MM2S] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
+assign_bd_address -offset 0x80000000 -range $ddr4_range -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_S2MM] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
 
 # Wrapper and Top
 regenerate_bd_layout
