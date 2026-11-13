@@ -215,6 +215,40 @@ void CapturePipelineSequencer::pollLaneStates(int samples) {
                  isrBefore, isrAfter, (isrAfter & 0x00020000) ? "YES" : "no");
 }
 
+void CapturePipelineSequencer::sweepHsSettle() {
+    constexpr uint64_t CSI_BASE = 0x5d600000ull;
+    constexpr uint64_t DPHY_BASE = CSI_BASE + 0x1000;
+    const uint32_t values[] = {30, 50, 70, 90, 110, 120, 130, 150, 170, 200, 250, 300, 400};
+    std::fprintf(stderr, "---- HS_SETTLE sweep (sensor restarted for each value) ----\n");
+    try {
+        for (uint32_t ns : values) {
+            m_cameraControl.beforePipelineReset();  // sensor to standby (I2C is still valid)
+            m_axiLite.write32(DPHY_BASE + 0x30, ns);  // HS_SETTLE, lane 0
+            m_axiLite.write32(DPHY_BASE + 0x48, ns);  // HS_SETTLE, lane 1
+            // D-PHY soft reset pulse (control register bit 0), keeping the enable bit (bit 1).
+            const uint32_t ctrl = m_axiLite.read32(DPHY_BASE + 0x00);
+            m_axiLite.write32(DPHY_BASE + 0x00, ctrl | 0x1);
+            m_axiLite.write32(DPHY_BASE + 0x00, (ctrl | 0x2) & ~0x1u);
+            m_axiLite.write32(CSI_BASE + 0x24, m_axiLite.read32(CSI_BASE + 0x24));  // clear ISR (W1C)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            m_cameraControl.afterPipelineStart();  // sensor streaming again
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            const uint32_t cl = m_axiLite.read32(DPHY_BASE + 0x18), d0 = m_axiLite.read32(DPHY_BASE + 0x1c),
+                           d1 = m_axiLite.read32(DPHY_BASE + 0x20), csr = m_axiLite.read32(CSI_BASE + 0x10),
+                           isr = m_axiLite.read32(CSI_BASE + 0x24), rb = m_axiLite.read32(DPHY_BASE + 0x30);
+            std::fprintf(stderr,
+                         "[SWEEP] hs_settle=%3u ns (readback %u): clk=0x%02x d0=0x%08x d1=0x%08x "
+                         "packets=%u irq=0x%08x%s\n",
+                         ns, rb, cl, d0, d1, csr >> 16, isr,
+                         ((csr >> 16) || (d0 >> 16) || (d0 & 3) == 1 || (cl & 3) == 1) ? "   <-- activity" : "");
+        }
+        m_cameraControl.beforePipelineReset();
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[SWEEP] aborted: %s\n", e.what());
+    }
+    std::fflush(stderr);
+}
+
 void CapturePipelineSequencer::reconfigurePipeline() {
     const int width = m_width;
     const int height = m_height;

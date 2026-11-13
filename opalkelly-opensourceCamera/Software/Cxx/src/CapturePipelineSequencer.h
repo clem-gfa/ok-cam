@@ -74,6 +74,12 @@ public:
     // often each distinct state is seen (e.g. does a lane ever report stop state, HS or escape mode?).
     void pollLaneStates(int samples);
 
+    // Bring-up aid (stderr): for each HS_SETTLE value (ns), put the sensor in standby, program the
+    // D-PHY HS_SETTLE registers of both lanes, soft-reset the D-PHY, restart the sensor and report
+    // the lane states and the number of CSI-2 packets received. Needs the sensor under I2C control
+    // (call after the pipeline is up) and OKCAM_EARLY_STREAM unset.
+    void sweepHsSettle();
+
 private:
     void reconfigurePipeline();
     void configureIPs(int width, int height);

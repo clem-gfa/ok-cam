@@ -247,6 +247,8 @@ bool GuiCameraBackend::startPipeline(double exposure, int rgain, int ggain, int 
             }
             // OKCAM_DEBUG=2 also samples the D-PHY lane states repeatedly.
             if (std::strcmp(dbg, "2") == 0) m_seq->pollLaneStates(200);
+            // OKCAM_DEBUG=3: sweep the D-PHY HS_SETTLE register at run time (no new bitstream).
+            if (std::strcmp(dbg, "3") == 0) m_seq->sweepHsSettle();
             std::fflush(stderr);
         }
         return true;
