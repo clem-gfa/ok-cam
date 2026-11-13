@@ -4,6 +4,13 @@ Etat : **etude et prototype** (pas encore de gateware). Contenu :
 
 - `mic_pins.xdc` : contraintes de broches (33 signaux sur le connecteur **MC2** de la XEM8310).
 - `sim/pdm_chain.py` : modele de la chaine de decimation PDM -> PCM (numpy uniquement).
+- `rtl/` : `mic_clkgen.v` (horloge PDM, sequence standard puis ultrason, strobes d'echantillonnage), `pdm_capture.v` (32 lignes -> 64 bits), `cic_bank.v` (64 CIC ordre 5, R=12, 19 bits).
+- `sim/run.sh [SD] [INVERT]` : simulation iverilog (64 micros modelises avec les timings de la datasheet) + comparaison bit a bit avec le modele Python.
+
+## Etat de la verification (simulation uniquement, pas encore sur carte)
+- Capture + CIC : 64/64 canaux identiques au modele, horloge normale et inversee.
+- Fenetre de delai d'echantillonnage SD (96 MHz) : 0-2 echec, **3 a 8 OK** ; valeur par defaut 7 (a recaler sur la carte, le modele ne connait pas les delais de routage).
+- Non fait : FIR de decimation (HDL), egalisation par micro, paquets audio + horodatage, integration Vivado.
 
 ## Parametres retenus (voir datasheet Knowles, rev. B)
 - Mode **ultrason** : horloge 3,072 a 4,8 MHz. Choix : **4,8 MHz**.
