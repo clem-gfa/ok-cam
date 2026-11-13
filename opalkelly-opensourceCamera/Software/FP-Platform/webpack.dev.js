@@ -11,9 +11,7 @@ const common = require('./webpack.common.js');
 
 module.exports = merge(common, {
   mode: 'development',
-  // No inline source maps: they double the bundle (83 MB vs 41 MB) and the larger app
-  // fails to run on the XEM8310 ("Device is not open or no longer available").
-  devtool: false,
+  devtool: 'inline-source-map',
   devServer: {
     static: './dist',
   },
