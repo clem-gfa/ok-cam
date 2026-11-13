@@ -169,7 +169,13 @@ bool GuiCameraBackend::configureAndBuild(const std::string& bitfilesRoot,
         }
 
         const std::string bitfile = bitfilesRoot + "/" + bitfileFor(config);
-        if (ec(m_fp->ConfigureFPGA(bitfile)) != 0) {
+        // OKCAM_NO_CONFIGURE=1: do not load a bitfile; the FPGA was already programmed (e.g. over
+        // JTAG from the Vivado Hardware Manager with an ILA-instrumented bitstream).
+        const char* noCfg = std::getenv("OKCAM_NO_CONFIGURE");
+        if (noCfg && *noCfg && std::strcmp(noCfg, "0") != 0) {
+            std::fprintf(stderr, "[backend] OKCAM_NO_CONFIGURE set: FPGA configuration skipped (expected %s)\n",
+                         bitfile.c_str());
+        } else if (ec(m_fp->ConfigureFPGA(bitfile)) != 0) {
             err = std::string("ConfigureFPGA failed: ") + m_fp->GetLastErrorMessage();
             close();
             return false;
