@@ -28,6 +28,7 @@ import "./App.css";
 import FrontPanelLogo from "../assets/images/logo512.png";
 
 import CameraView, { CameraProductModel } from "./CameraView";
+import FileWriteProbe from "./FileWriteProbe";
 import { CameraMode } from "./CameraTypes";
 
 import { IISP } from "./IISP";
@@ -426,6 +427,7 @@ function App() {
                     workQueue={DeviceWorkQueue}
                     cameraMode={cameraSystem.mode}
                 />
+                <FileWriteProbe />
             </div>
         );
     } else {
