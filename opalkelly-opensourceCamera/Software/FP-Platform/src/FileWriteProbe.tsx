@@ -11,10 +11,16 @@
 
 import React from "react";
 
+type Writable = { write: (data: Uint8Array<ArrayBuffer>) => Promise<void>; close: () => Promise<void> };
+type FileHandle = {
+    createWritable: () => Promise<Writable>;
+    requestPermission?: (descriptor: { mode: "readwrite" }) => Promise<string>;
+    queryPermission?: (descriptor: { mode: "readwrite" }) => Promise<string>;
+};
+type DirHandle = { getFileHandle: (name: string, options: { create: boolean }) => Promise<FileHandle> };
 type SaveFilePickerWindow = Window & {
-    showSaveFilePicker?: (options?: { suggestedName?: string }) => Promise<{
-        createWritable: () => Promise<{ write: (data: Uint8Array<ArrayBuffer>) => Promise<void>; close: () => Promise<void> }>;
-    }>;
+    showSaveFilePicker?: (options?: { suggestedName?: string }) => Promise<FileHandle>;
+    showDirectoryPicker?: (options?: { mode?: "readwrite" }) => Promise<DirHandle>;
 };
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -47,7 +53,12 @@ async function testPicker(): Promise<string> {
     const w = window as SaveFilePickerWindow;
     if (typeof w.showSaveFilePicker !== "function") return "NOT AVAILABLE (showSaveFilePicker is missing)";
     const handle = await w.showSaveFilePicker({ suggestedName: "okcam_probe_picker.bin" });
-    const writable = await handle.createWritable();
+    let perm = "n/a";
+    if (handle.queryPermission) perm = await handle.queryPermission({ mode: "readwrite" });
+    if (perm !== "granted" && handle.requestPermission) perm = await handle.requestPermission({ mode: "readwrite" });
+    const writable = await handle.createWritable().catch((e: unknown) => {
+        throw new Error(`permission=${perm}; ${e instanceof Error ? e.message : String(e)}`);
+    });
     const chunk = makeChunk();
     const start = performance.now();
     for (let written = 0; written < TOTAL_BYTES; written += CHUNK_BYTES) await writable.write(chunk);
@@ -70,6 +81,52 @@ async function testOpfs(): Promise<string> {
     return `OK (private storage, not visible to the user): ${TOTAL_BYTES >> 20} MB, ${mbps(TOTAL_BYTES, ms)}`;
 }
 
+async function testDirectoryPicker(): Promise<string> {
+    const w = window as SaveFilePickerWindow;
+    if (typeof w.showDirectoryPicker !== "function") return "NOT AVAILABLE (showDirectoryPicker is missing)";
+    const dir = await w.showDirectoryPicker({ mode: "readwrite" });
+    const handle = await dir.getFileHandle("okcam_probe_dir.bin", { create: true });
+    const writable = await handle.createWritable();
+    const chunk = makeChunk();
+    const start = performance.now();
+    for (let written = 0; written < TOTAL_BYTES; written += CHUNK_BYTES) await writable.write(chunk);
+    await writable.close();
+    return `OK: ${TOTAL_BYTES >> 20} MB written, ${mbps(TOTAL_BYTES, performance.now() - start)}`;
+}
+
+// Record into the private storage (fast), then hand the file to the user with <a download> using a
+// disk-backed File (not loaded into memory): check that okcam_probe_opfs_export.bin (128 MB) arrives in Downloads.
+async function testOpfsExport(): Promise<string> {
+    const storage = navigator.storage as StorageManager | undefined;
+    if (!storage || typeof storage.getDirectory !== "function") return "NOT AVAILABLE";
+    const root = await storage.getDirectory();
+    const handle = await root.getFileHandle("okcam_probe_opfs_export.bin", { create: true });
+    const writable = await handle.createWritable();
+    const chunk = makeChunk();
+    for (let written = 0; written < TOTAL_BYTES; written += CHUNK_BYTES) await writable.write(chunk);
+    await writable.close();
+    const file = await handle.getFile();
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "okcam_probe_opfs_export.bin";
+    document.body.appendChild(a);
+    const start = performance.now();
+    a.click();
+    a.remove();
+    setTimeout(() => {
+        URL.revokeObjectURL(url);
+        void root.removeEntry("okcam_probe_opfs_export.bin");
+    }, 120000);
+    return `export triggered after ${(performance.now() - start).toFixed(0)} ms (${file.size >> 20} MB File): check Downloads for okcam_probe_opfs_export.bin and its size`;
+}
+
+async function describeQuota(): Promise<string> {
+    const est = await navigator.storage?.estimate?.();
+    if (!est) return "n/a";
+    return `quota ${((est.quota ?? 0) / 1e9).toFixed(1)} GB, used ${((est.usage ?? 0) / 1e6).toFixed(0)} MB`;
+}
+
 const FileWriteProbe: React.FC = () => {
     const [lines, setLines] = React.useState<string[]>([]);
     const [busy, setBusy] = React.useState(false);
@@ -84,6 +141,9 @@ const FileWriteProbe: React.FC = () => {
             ["<a download>", testDownload],
             ["showSaveFilePicker", testPicker],
             ["OPFS", testOpfs],
+            ["OPFS storage", describeQuota],
+            ["showDirectoryPicker", testDirectoryPicker],
+            ["OPFS -> download", testOpfsExport],
         ];
         for (const [name, fn] of tests) {
             try {
