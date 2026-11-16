@@ -57,15 +57,15 @@ int main() {
     for (uint32_t s = 0; s < uint32_t(N); s++) {
         if (s == 10 || s == 11 || s == 30) continue;
         const bool afterGap = (s == 12 || s == 31);
-        pipe.push(makePacket(s, 1000000ull + s * 21ull * 480, uint32_t(s / 10), 500000ull + (s / 10) * 3000000ull, afterGap));
+        pipe.push(makePacket(s, 1000000ull + s * 21ull * 528, uint32_t(s / 10), 500000ull + (s / 10) * 3000000ull, afterGap));
         sent++;
     }
     // completer a un multiple de 16 paquets (taille de lecture) avec des paquets valides en queue
     uint32_t extra = N;
-    while (sent % 16) { pipe.push(makePacket(extra, 1000000ull + extra * 21ull * 480, 9, 0, false)); extra++; sent++; }
+    while (sent % 16) { pipe.push(makePacket(extra, 1000000ull + extra * 21ull * 528, 9, 0, false)); extra++; sent++; }
 
     const std::string path = "audio_test.wav";
-    AudioCapture cap(pipe, 95.5e6, 5000);
+    AudioCapture cap(pipe, 99.96e6, 5000);
     cap.start(path);
     for (int i = 0; i < 200 && !pipe.finished; i++) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     cap.stop();
@@ -87,7 +87,7 @@ int main() {
     assert(w[56] == 0xFE && w[57] == 0xFF);                       // WAVE_FORMAT_EXTENSIBLE
     assert(w[58] == 64 && w[59] == 0);                            // 64 canaux
     const uint32_t rate = audioWord(&w[0], 15);                  // octets 60..63
-    assert(rate == 198958);                                       // 95,5 MHz / 480
+    assert(rate == 189318);                                       // 99,96 MHz / 528
     assert(w[70] == 24 && w[74] == 24);                          // bits par echantillon, bits valides
     const uint64_t dsData = uint64_t(audioWord(&w[0], 7)) | uint64_t(audioWord(&w[0], 8)) << 32;   // ds64 : taille des donnees
     assert(dsData == st.frames * 192);

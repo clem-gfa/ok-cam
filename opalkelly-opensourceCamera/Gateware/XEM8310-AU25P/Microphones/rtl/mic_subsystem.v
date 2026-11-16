@@ -3,10 +3,10 @@
 //   WireIn  0x01 : bit0 = enable, bit1 = reset, bits[15:8] = delai d'echantillonnage (cycles de clk)
 //   WireOut 0x20 : bit0 = run, bit1 = ultra, bit2 = locked, bit3 = fifo plein vu (collant)
 //   WireOut 0x21 : paquets abandonnes ;  WireOut 0x22 : overruns du paquetiseur
-// Domaines : clk (horloge micros, ~95,5 MHz), ok_clk (okClk, registres FrontPanel et lecture du FIFO), vclk (video).
+// Domaines : clk (horloge micros = clk_out2 de clk_wiz_0, 99,96 MHz), ok_clk (okClk, registres FrontPanel et lecture du FIFO), vclk (video).
 module mic_subsystem #(
-    parameter DIV_STD        = 40,
-    parameter DIV_ULTRA      = 20,
+    parameter DIV_STD        = 44,     // 99,96 MHz / 44 = 2,272 MHz (mode standard)
+    parameter DIV_ULTRA      = 22,     // 99,96 MHz / 22 = 4,544 MHz (mode ultrason)
     parameter STD_PERIODS    = 48000,
     parameter SETTLE_PERIODS = 48000,
     parameter INVERT_CLK     = 0,

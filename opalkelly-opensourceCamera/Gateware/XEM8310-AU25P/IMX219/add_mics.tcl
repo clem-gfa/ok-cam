@@ -11,7 +11,7 @@
 # project.tcl appelle ce script juste avant la creation du wrapper. Par defaut (drapeau absent) le
 # projet camera est strictement inchange.
 #
-# Ajoute : sous-systeme micros (module mic_subsystem), PLL micros 95,5 MHz (clk_wiz_mic) depuis okClk,
+# Ajoute : sous-systeme micros (module mic_subsystem), horloge micros 99,96 MHz (clk_wiz_0/clk_out2),
 # FIFO audio a horloges independantes, WireIn 0x01, WireOut 0x20-0x22, pipe a blocs 0xA1, ports mic_clk / mic_data[31:0],
 # contraintes mic_pins.xdc (+ VIO3 = 1,8 V a regler cote FrontPanel) et mic_timing.xdc.
 #----------------------------------------------------------------------
@@ -54,15 +54,11 @@ set_property -dict [list \
     CONFIG.BTPO.COUNT {2} \
 ] [get_bd_cells frontpanel_0]
 
-# --- PLL micros : 95,5 MHz depuis okClk (100,8 MHz) -> horloge PDM 4,775 MHz (< 4,8 MHz maxi du micro) -----
-set clk_wiz_mic [ create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz clk_wiz_mic ]
-set_property -dict [list \
-    CONFIG.PRIM_IN_FREQ {100.8} \
-    CONFIG.PRIM_SOURCE {No_buffer} \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {95.5} \
-    CONFIG.USE_LOCKED {true} \
-    CONFIG.USE_RESET {false} \
-] $clk_wiz_mic
+# --- Horloge micros : on reutilise clk_wiz_0/clk_out2 (99,96 MHz). Un second MMCM sur okClk ne place pas
+# (cascade MMCM -> BUFGCE -> 2 MMCM, Place 30-718). 99,96 MHz / 22 = 4,544 MHz (maxi du micro : 4,8 MHz).
+# clk_wiz_0 n'a pas de sortie 'locked' : le signal locked du sous-systeme est tenu a 1.
+set mic_locked [ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant mic_locked ]
+set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] $mic_locked
 
 # --- sous-systeme micros -----------------------------------------------------------------------
 set block_name mic_subsystem
@@ -100,10 +96,9 @@ connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout22] [get_bd_intf_pins 
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/btpipeouta1] [get_bd_intf_pins mic_subsystem_0/btpipeout_audio]
 
 # Horloges
-connect_bd_net [get_bd_pins frontpanel_0/okClk] [get_bd_pins clk_wiz_mic/clk_in1] [get_bd_pins mic_subsystem_0/ok_clk]
-connect_bd_net [get_bd_pins clk_wiz_mic/clk_out1] [get_bd_pins mic_subsystem_0/clk]
-connect_bd_net [get_bd_pins clk_wiz_mic/locked]   [get_bd_pins mic_subsystem_0/locked]
-connect_bd_net [get_bd_pins clk_wiz_0/clk_out2]   [get_bd_pins mic_subsystem_0/vclk]
+connect_bd_net [get_bd_pins frontpanel_0/okClk]  [get_bd_pins mic_subsystem_0/ok_clk]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out2]  [get_bd_pins mic_subsystem_0/clk] [get_bd_pins mic_subsystem_0/vclk]
+connect_bd_net [get_bd_pins mic_locked/dout]     [get_bd_pins mic_subsystem_0/locked]
 
 # Pads
 connect_bd_net [get_bd_pins mic_subsystem_0/mic_clk_o]  [get_bd_ports mic_clk]

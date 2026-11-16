@@ -12,7 +12,7 @@ Etat : **etude et prototype** (pas encore de gateware). Contenu :
 ## Etat de la verification (simulation uniquement, pas encore sur carte)
 - Capture + CIC : 64/64 canaux identiques au modele, horloge normale et inversee.
 - Fenetre de delai d'echantillonnage SD (96 MHz) : 0-2 echec, **3 a 8 OK** ; valeur par defaut 7 (a recaler sur la carte, le modele ne connait pas les delais de routage).
-- FIR (`sim/run_fir.sh`) : 64/64 canaux identiques au modele entier, cadence reelle (une entree toutes les 240 cycles a 96 MHz, 336 cycles de calcul pour 480 disponibles). Gain verifie : sinus 0,5 -> crete 3,98 M (attendu 3,98 M), pleine echelle sans depassement des 24 bits.
+- FIR (`sim/run_fir.sh`) : 64/64 canaux identiques au modele entier, cadence reelle (une entree toutes les 240 cycles a 96 MHz, 336 cycles de calcul pour 480 disponibles a 96 MHz ; avec la vraie horloge 99,96 MHz / 22, 528 disponibles). Gain verifie : sinus 0,5 -> crete 3,98 M (attendu 3,98 M), pleine echelle sans depassement des 24 bits.
 - Paquets (`sim/run_audio.sh`) : en-tetes, charge utile, horodatages et abandon de paquets entiers quand le PC ne lit plus (45 paquets source, 9 abandonnes, seq avec trous, flag « perdu » coherent, aucun paquet tronque).
 - Bout en bout (`sim/run_subsystem.sh`) : 64 micros modelises -> `mic_subsystem` -> pipe 0xA1 lue par un « PC » (blocs de 1024 mots) : 6 paquets, 126 instants, **64/64 canaux identiques** au modele (CIC puis FIR entiers), aucun paquet abandonne, statut `0x7` (run, ultra, locked).
 - Logiciel PC (C++, `Software/Cxx/src/AudioStream.h` + `AudioPipe.h`, test `Software/Cxx/tests/audio_stream_test.cpp`, `-DBUILD_TESTS=ON`) : decodage des paquets, fichier **WAV RF64 64 canaux 24 bits** (valide au-dela de 4 Go, relu correctement par `ffprobe`), trous de `seq` remplaces par du silence et comptes, fichier `.csv` des horodatages par paquet (alignement avec la video), fenetre des derniers echantillons pour l'affichage. Teste hors materiel avec une pipe simulee (48 paquets dont 3 perdus). `AudioPipeOverClassicDataPort` (lecture reelle de la pipe 0xA1) n'est pas compile ici (pas de SDK FrontPanel).
@@ -24,7 +24,7 @@ set fpdir <chemin du FrontPanel Vivado IP>
 set with_mics 1
 source project.tcl
 ```
-Sans `with_mics`, le projet camera est inchange. Le script ajoute : le FIFO audio (horloges independantes, 4096 x 32), une PLL `clk_wiz_mic` (95,5 MHz depuis okClk -> horloge PDM 4,775 MHz, sous le maximum de 4,8 MHz du micro ; fs ~ 199 kS/s), `mic_subsystem`, les endpoints FrontPanel et les ports `mic_clk` / `mic_data[31:0]`, `mic_pins.xdc` et `mic_timing.xdc`. Points a verifier au premier essai : noms des pins d'interface du FrontPanel (`wirein01`, `wireout20..22`, `btpipeouta1`), parametres du FIFO, DRC de banque (VIO3).
+Sans `with_mics`, le projet camera est inchange. Le script ajoute : le FIFO audio (horloges independantes, 4096 x 32), la sortie `clk_wiz_0/clk_out2` (99,96 MHz) comme horloge micros, **sans second MMCM** (un second MMCM sur okClk echoue au placement : Place 30-718, cascade MMCM -> BUFGCE -> 2 MMCM) ; horloge PDM = 99,96 / 22 = 4,544 MHz (maxi du micro : 4,8 MHz), fs = 189,3 kS/s, `mic_subsystem`, les endpoints FrontPanel et les ports `mic_clk` / `mic_data[31:0]`, `mic_pins.xdc` et `mic_timing.xdc`. Points a verifier au premier essai : noms des pins d'interface du FrontPanel (`wirein01`, `wireout20..22`, `btpipeouta1`), parametres du FIFO, DRC de banque (VIO3).
 Mise en service : VIO3 = 1,8 V, ecrire WireIn 0x01 = reset (0x2) puis enable | SD<<8 (SD = 7 au depart), lire WireOut 0x20 (bit0 run), puis lire la pipe 0xA1 avec le meme bloc que `BLOCK_WORDS` de `mic_subsystem` (defaut 256 mots = 1024 octets, comme la video ; le PC lit des multiples de 4096 octets = 1 paquet).
 Le debut de trame video est detecte par `axis_sof_monitor.v` (observateur AXI-Stream sur le flux vers le VDMA, simulation `sim/tb_sof.v` OK) : `add_mics.tcl` le branche sur `axi_vdma_0/S_AXIS_S2MM` ; si ce branchement echoue, le script le signale et tient `vsof` a 0 (`vcnt` reste 0).
 
@@ -35,10 +35,10 @@ Synchro video : `ts_unit` mesure, sur la meme horloge que l'audio, le debut de c
 
 
 ## Parametres retenus (voir datasheet Knowles, rev. B)
-- Mode **ultrason** : horloge 3,072 a 4,8 MHz. Choix : **4,8 MHz**.
+- Mode **ultrason** : horloge 3,072 a 4,8 MHz. Choix : **99,96 MHz / 22 = 4,544 MHz** (horloge deja presente dans le design, rapport cyclique 50 %) ; mode standard de demarrage : 99,96 / 44 = 2,272 MHz (< 2,475 MHz).
 - Bande utile **80 kHz** (reponse ultrason specifiee seulement jusqu'a 80 kHz, avec un pic de ~+14 dB vers 25 kHz : egalisation necessaire).
-- Decimation x24 : CIC ordre 5 R=12 (19 bits) -> 400 kS/s, puis FIR (63 + 10 coefficients) decimation 2 -> **200 kS/s**, 24 bits.
-- Debit utile : 64 x 200 kS/s x 3 octets = **38,4 Mo/s** (25,6 Mo/s en 16 bits).
+- Decimation x24 : CIC ordre 5 R=12 (19 bits) -> 378,6 kS/s, puis FIR (63 + 10 coefficients) decimation 2 -> **189,3 kS/s**, 24 bits (bande utile 80 kHz : -1,2 dB a 80 kHz, -8,6 dB a 100 kHz).
+- Debit utile : 64 x 189,3 kS/s x 3 octets = **36,3 Mo/s** (24,2 Mo/s en 16 bits). Un paquet = 21 instants = 528 ticks x 21 ; ~9 k paquets/s.
 - Datasheet : ne pas demarrer directement en mode ultrason (ni sortir du sleep vers l'ultrason) : demarrer l'horloge en mode standard (1,024 a 2,475 MHz), puis passer a 4,8 MHz (delai de changement de mode 10 ms). Rapport cyclique 48-52 % au-dessus de 2,4 MHz.
 - Micro « haut » (SELECT = VDD) : donnee sur front montant, a capturer sur front descendant ; micro « bas » (SELECT = GND) : l'inverse. `tDD` = 18 a 40 ns.
 

@@ -45,7 +45,7 @@ constexpr int      kAudioHeaderWords   = 8;
 constexpr uint32_t kAudioMagic         = 0x4D494331;                           // "MIC1"
 constexpr int      kAudioBlockSize     = 1024;     // pipe block size in bytes (= BLOCK_WORDS * 4 in the gateware)
 constexpr int      kAudioPipeAddress   = 0xA1;
-constexpr int      kAudioTicksPerFrame = 480;      // 20 clk per PDM period x 24 (decimation)
+constexpr int      kAudioTicksPerFrame = 528;      // 22 clk per PDM period x 24 (decimation)
 
 struct AudioPacketInfo {
     uint32_t seq = 0;
@@ -155,7 +155,7 @@ struct AudioStats {
 class AudioCapture {
 public:
     // tickHz : frequency of the audio clock (timestamp ticks/s); sampleRate = tickHz / 480.
-    AudioCapture(IAudioPipe& pipe, double tickHz = 95.5e6, std::size_t displayFrames = 100000)
+    AudioCapture(IAudioPipe& pipe, double tickHz = 99.96e6, std::size_t displayFrames = 100000)
         : m_pipe(pipe), m_tickHz(tickHz), m_ringCap(displayFrames), m_ring(displayFrames * kAudioFrameBytes) {}
     ~AudioCapture() { stop(); }
 

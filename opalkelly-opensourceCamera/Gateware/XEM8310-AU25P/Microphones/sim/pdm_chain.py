@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Modele bit-exact de la chaine de decimation PDM -> PCM prevue pour les 64 micros.
 
-PDM 4,8 MHz (mode ultrason du SPH0641LU4H-1)
+PDM 4,5436 MHz (mode ultrason du SPH0641LU4H-1 ; 99,96 MHz / 22)
   -> CIC ordre 5, R=12 (entier, 19 bits)  -> 400 kS/s
-  -> FIR passe-bas + compensation du droop du CIC, decimation 2 -> 200 kS/s, 24 bits
+  -> FIR passe-bas + compensation du droop du CIC, decimation 2 -> 189,3 kS/s, 24 bits
 
 Le modulateur sigma-delta est un modele generique d'ordre 2 : il sert a valider les filtres
 (reponse, repliement, longueurs de mots), PAS a predire le bruit reel du micro.
 
 Usage : python3 pdm_chain.py        (numpy uniquement)
 """
+import os
 import numpy as np
 
-FPDM = 4.8e6
+# Horloge PDM reelle du design : 99,96 MHz (clk_wiz_0) / 22 = 4,5436 MHz. Surcharge : variable PDM_HZ.
+FPDM = float(os.environ.get("PDM_HZ", 99.96e6 / 22))
 CIC_N, CIC_R = 5, 12
 FIR_TAPS, FIR_DEC = 63, 2
 FS1 = FPDM / CIC_R            # 400 kS/s
@@ -92,7 +94,7 @@ def main():
         y = chain(sigma_delta2(amp * np.sin(2 * np.pi * f0 * t)))
         g = tone_db(y, f0, FS) - 20 * np.log10(amp)
         print(f" {f0/1e3:9.1f} | {g:+8.2f}")
-    print("\nRepliement (tons au-dessus de Nyquist = 100 kHz, mesures a la frequence repliee) :")
+    print(f"\nRepliement (tons au-dessus de Nyquist = {FS/2e3:.1f} kHz, mesures a la frequence repliee) :")
     for f0 in (125e3, 140e3, 160e3, 190e3):
         fa = abs(((f0 + FS / 2) % FS) - FS / 2)
         y = chain(sigma_delta2(amp * np.sin(2 * np.pi * f0 * t)))
