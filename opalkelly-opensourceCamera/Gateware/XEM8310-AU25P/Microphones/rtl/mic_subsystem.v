@@ -65,9 +65,9 @@ module mic_subsystem #(
 
     // ---- paquets -> FIFO ----------------------------------------------------------------------
     wire [31:0] tdata; wire tvalid, tlast, tready;
-    wire [12:0] wr_cnt, rd_cnt;
+    wire [11:0] wr_cnt, rd_cnt;
     wire        full, empty;
-    wire space_ok = (13'd4095 - wr_cnt) >= 13'd1024;       // FIFO de 4095 mots utiles
+    wire space_ok = (12'd4095 - wr_cnt) >= 12'd1024;       // FIFO de 4095 mots utiles
     wire [31:0] overruns, dropped;
     audio_packetizer #(.CH(64), .W(24), .NS(21)) u_pkt (
         .clk(clk), .rst(rst), .run(run), .in(fir), .in_valid(fir_v), .ts(ts), .vts(vts), .vcnt(vcnt),

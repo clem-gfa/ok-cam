@@ -37,8 +37,8 @@ set_property -dict [list \
   CONFIG.Use_Embedded_Registers {false} \
   CONFIG.Read_Data_Count {true} \
   CONFIG.Write_Data_Count {true} \
-  CONFIG.Read_Data_Count_Width {13} \
-  CONFIG.Write_Data_Count_Width {13} \
+  CONFIG.Read_Data_Count_Width {12} \
+  CONFIG.Write_Data_Count_Width {12} \
 ] [get_ips fifo_audio_pkt]
 
 add_files -fileset constrs_1 -norecurse [list ../Microphones/mic_pins.xdc ../Microphones/mic_timing.xdc]
