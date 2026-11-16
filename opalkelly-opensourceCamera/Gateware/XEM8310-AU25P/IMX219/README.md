@@ -71,3 +71,7 @@ Once the HLS IP cores are generated, generate the bitstream:
 
 
 Copyright (c) 2025-2026 Opal Kelly Incorporated
+
+## LED et boutons utilisateur de la carte DARWIN (optionnel, `with_userio`)
+
+`set with_userio 1` avant `source project.tcl` ajoute un AXI GPIO (`add_userio.tcl`, non teste sous Vivado) derriere le pont AXI-Lite : base `0x40000000`, `GPIO_DATA` (0x00) = LED_0 (bit0) / LED_1 (bit1), 1 = allumee ; `GPIO2_DATA` (0x08) = User_Button (bit0) / Reset_Button (bit1), **actifs a l'etat bas** (pull-up 4,75 k + filtre RC ~10 ms sur la carte). Broches (MC1, bank 84, 1,8 V) dans `xem8310-au25p_userio.xdc`. Pilotes PC : `Software/Cxx/src/UserIoDriver.h` et `Software/FP-Platform/src/UserIoDriver.ts` (`isPresent()` renvoie faux pour un bitfile sans ce bloc) ; panneau de test « I/O » dans l'appli TypeScript.

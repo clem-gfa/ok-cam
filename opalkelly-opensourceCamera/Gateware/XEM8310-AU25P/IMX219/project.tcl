@@ -480,6 +480,9 @@ assign_bd_address -offset 0x59400000 -range 0x00010000 -target_address_space [ge
 assign_bd_address -offset 0x80000000 -range $ddr4_range -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_MM2S] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
 assign_bd_address -offset 0x80000000 -range $ddr4_range -target_address_space [get_bd_addr_spaces axi_vdma_0/Data_S2MM] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
 
+# Optional: user LEDs / buttons of the DARWIN board through an AXI GPIO (set 'with_userio 1' before sourcing)
+if {[info exists with_userio] && $with_userio} { source add_userio.tcl }
+
 # Optional: 64 PDM microphones (set 'with_mics 1' before sourcing; default: unchanged camera design)
 if {[info exists with_mics] && $with_mics} { source add_mics.tcl }
 

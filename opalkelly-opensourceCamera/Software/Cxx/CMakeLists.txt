@@ -117,6 +117,9 @@ if(BUILD_TESTS)
     target_include_directories(audio_stream_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(audio_stream_test PRIVATE Threads::Threads)
     add_test(NAME audio_stream_test COMMAND audio_stream_test)
+    add_executable(user_io_test tests/user_io_test.cpp)
+    target_include_directories(user_io_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_test(NAME user_io_test COMMAND user_io_test)
 endif()
 
 # --- Optional wxWidgets GUI ---------------------------------------------------------

@@ -14,8 +14,9 @@
         "start": "webpack serve --open --config webpack.dev.js",
         "format-check": "prettier --check ./src/**",
         "lint": "eslint ./src/**/*.{ts,tsx}",
-        "test": "npm run test:audio",
-        "test:audio": "ts-node --transpile-only --compiler-options \"{\\\"module\\\":\\\"commonjs\\\"}\" tests/audioStream.test.ts"
+        "test": "npm run test:audio && npm run test:userio",
+        "test:audio": "ts-node --transpile-only --compiler-options \"{\\\"module\\\":\\\"commonjs\\\"}\" tests/audioStream.test.ts",
+        "test:userio": "ts-node --transpile-only --compiler-options \"{\\\"module\\\":\\\"commonjs\\\"}\" tests/userIo.test.ts"
     },
     "devDependencies": {
         "@types/node": "^22.9.0",

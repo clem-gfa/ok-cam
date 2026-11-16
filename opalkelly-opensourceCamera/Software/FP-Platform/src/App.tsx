@@ -31,6 +31,7 @@ import FrontPanelLogo from "../assets/images/logo512.png";
 import CameraView, { CameraProductModel } from "./CameraView";
 import FileWriteProbe from "./FileWriteProbe";
 import AudioPanel from "./AudioPanel";
+import UserIoPanel from "./UserIoPanel";
 import { CameraMode } from "./CameraTypes";
 
 import { IISP } from "./IISP";
@@ -115,6 +116,7 @@ type CameraSystem = {
     // Microphone panel (XEM8310 only): the Classic data port and its AXI-Stream wrapper
     classicDataPort?: IFPGADataPortClassic;
     classicStream?: AxiStreamOverClassicDataPort;
+    axiLite?: IAxiLite;
     sequencer: CapturePipelineSequencer;
     isp: IISP;
     tpg: ITPG;
@@ -370,7 +372,7 @@ function App() {
 
                     const sequencer = new CapturePipelineSequencer(axiLite, axiStream, mode, isp, tpg, control, DeviceWorkQueue);
 
-                    setCameraSystem({ sequencer, isp, tpg, control, mode, classicDataPort, classicStream });
+                    setCameraSystem({ sequencer, isp, tpg, control, mode, classicDataPort, classicStream, axiLite });
                 }
                 catch(error) {
                     const isTPG = config === DeviceConfiguration.HUB1450_TPG || config === DeviceConfiguration.XEM8320_TPG || config === DeviceConfiguration.XEM8310_TPG;
@@ -441,6 +443,9 @@ function App() {
                     cameraMode={cameraSystem.mode}
                 />
                 <FileWriteProbe />
+                {cameraSystem.mode === "imx219" && cameraSystem.axiLite && (
+                    <UserIoPanel axiLite={cameraSystem.axiLite} workQueue={DeviceWorkQueue} />
+                )}
                 {cameraSystem.mode === "imx219" && cameraSystem.classicDataPort && cameraSystem.classicStream && (
                     <AudioPanel
                         dataPort={cameraSystem.classicDataPort}
