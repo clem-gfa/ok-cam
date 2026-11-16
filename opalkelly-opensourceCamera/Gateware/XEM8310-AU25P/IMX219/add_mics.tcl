@@ -12,7 +12,7 @@
 # projet camera est strictement inchange.
 #
 # Ajoute : sous-systeme micros (module mic_subsystem), horloge micros 99,96 MHz (clk_wiz_0/clk_out2),
-# FIFO audio a horloges independantes, WireIn 0x01, WireOut 0x20-0x22, pipe a blocs 0xA1, ports mic_clk / mic_data[31:0],
+# FIFO audio a horloges independantes, WireIn 0x01, WireOut 0x20-0x23, pipe a blocs 0xA1, ports mic_clk / mic_data[31:0],
 # contraintes mic_pins.xdc (+ VIO3 = 1,8 V a regler cote FrontPanel) et mic_timing.xdc.
 #----------------------------------------------------------------------
 
@@ -26,19 +26,20 @@ set_property file_type {Verilog Header} [get_files fir_coeffs.vh]
 set_property is_global_include true [get_files fir_coeffs.vh]
 set_property include_dirs [list [file normalize $mic_rtl]] [current_fileset]
 
-# FIFO audio : horloges independantes (ecriture = horloge micros, lecture = okClk), 4096 x 32, non FWFT
+# FIFO audio : horloges independantes (ecriture = horloge micros, lecture = okClk), 32768 x 32 (128 Kio), non FWFT.
+# Profond a dessein : l'appli lit la video par tranches et ne lit l'audio qu'entre deux tranches.
 create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_audio_pkt
 set_property -dict [list \
   CONFIG.Fifo_Implementation {Independent_Clocks_Block_RAM} \
   CONFIG.Input_Data_Width {32} \
-  CONFIG.Input_Depth {4096} \
+  CONFIG.Input_Depth {32768} \
   CONFIG.Output_Data_Width {32} \
   CONFIG.Reset_Pin {true} \
   CONFIG.Use_Embedded_Registers {false} \
   CONFIG.Read_Data_Count {true} \
   CONFIG.Write_Data_Count {true} \
-  CONFIG.Read_Data_Count_Width {12} \
-  CONFIG.Write_Data_Count_Width {12} \
+  CONFIG.Read_Data_Count_Width {15} \
+  CONFIG.Write_Data_Count_Width {15} \
 ] [get_ips fifo_audio_pkt]
 
 add_files -fileset constrs_1 -norecurse [list ../Microphones/mic_pins.xdc ../Microphones/mic_timing.xdc]
@@ -48,8 +49,8 @@ update_compile_order -fileset sources_1
 set_property -dict [list \
     CONFIG.WI.ADDR_0 {0x00} CONFIG.WI.ADDR_1 {0x01} CONFIG.WI.ADDR_2 {0x1d} CONFIG.WI.ADDR_3 {0x1e} CONFIG.WI.ADDR_4 {0x1f} \
     CONFIG.WI.COUNT {5} \
-    CONFIG.WO.ADDR_0 {0x20} CONFIG.WO.ADDR_1 {0x21} CONFIG.WO.ADDR_2 {0x22} CONFIG.WO.ADDR_3 {0x3e} CONFIG.WO.ADDR_4 {0x3f} \
-    CONFIG.WO.COUNT {5} \
+    CONFIG.WO.ADDR_0 {0x20} CONFIG.WO.ADDR_1 {0x21} CONFIG.WO.ADDR_2 {0x22} CONFIG.WO.ADDR_3 {0x23} CONFIG.WO.ADDR_4 {0x3e} CONFIG.WO.ADDR_5 {0x3f} \
+    CONFIG.WO.COUNT {6} \
     CONFIG.BTPO.ADDR_0 {0xA0} CONFIG.BTPO.ADDR_1 {0xA1} \
     CONFIG.BTPO.COUNT {2} \
 ] [get_bd_cells frontpanel_0]
@@ -93,6 +94,7 @@ connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wirein01]  [get_bd_intf_pins 
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout20] [get_bd_intf_pins mic_subsystem_0/wireout20_mic_status]
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout21] [get_bd_intf_pins mic_subsystem_0/wireout21_mic_dropped]
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout22] [get_bd_intf_pins mic_subsystem_0/wireout22_mic_overruns]
+connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout23] [get_bd_intf_pins mic_subsystem_0/wireout23_mic_level]
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/btpipeouta1] [get_bd_intf_pins mic_subsystem_0/btpipeout_audio]
 
 # Horloges

@@ -4,7 +4,7 @@ Etat : **etude et prototype** (pas encore de gateware). Contenu :
 
 - `mic_pins.xdc` : contraintes de broches (33 signaux sur le connecteur **MC2** de la XEM8310).
 - `sim/pdm_chain.py` : modele de la chaine de decimation PDM -> PCM (numpy uniquement).
-- `rtl/` : `mic_clkgen.v` (horloge PDM, sequence standard puis ultrason, strobes d'echantillonnage), `pdm_capture.v` (32 lignes -> 64 bits), `cic_bank.v` (64 CIC ordre 5, R=12, 19 bits), `fir_bank.v` (FIR de decimation x2, 73 coefficients Q17 symetriques, 8 voies x 8 canaux, 1 multiplieur par voie), `fir_coeffs.vh` (genere par `sim/gen_fir_coeffs.py`), `audio_packetizer.v` (paquets de 4096 octets pour le PC), `ts_unit.v` (base de temps commune audio/video), `mic_subsystem.v` (assemble le tout derriere des interfaces FrontPanel : WireIn 0x01, WireOut 0x20-0x22, pipe 0xA1).
+- `rtl/` : `mic_clkgen.v` (horloge PDM, sequence standard puis ultrason, strobes d'echantillonnage), `pdm_capture.v` (32 lignes -> 64 bits), `cic_bank.v` (64 CIC ordre 5, R=12, 19 bits), `fir_bank.v` (FIR de decimation x2, 73 coefficients Q17 symetriques, 8 voies x 8 canaux, 1 multiplieur par voie), `fir_coeffs.vh` (genere par `sim/gen_fir_coeffs.py`), `audio_packetizer.v` (paquets de 4096 octets pour le PC), `ts_unit.v` (base de temps commune audio/video), `mic_subsystem.v` (assemble le tout derriere des interfaces FrontPanel : WireIn 0x01, WireOut 0x20-0x23 (0x23 = occupation du FIFO audio en mots), pipe 0xA1).
 - `mic_timing.xdc` : contraintes (faux chemins sur les pads micros, delai reglé par SD).
 - `../IMX219/add_mics.tcl` : ajoute le sous-systeme micros au projet IMX219 (voir « Integration Vivado »).
 - `sim/run.sh [SD] [INVERT]` : simulation iverilog (64 micros modelises avec les timings de la datasheet) + comparaison bit a bit avec le modele Python.
@@ -24,7 +24,7 @@ set fpdir <chemin du FrontPanel Vivado IP>
 set with_mics 1
 source project.tcl
 ```
-Sans `with_mics`, le projet camera est inchange. Le script ajoute : le FIFO audio (horloges independantes, 4096 x 32), la sortie `clk_wiz_0/clk_out2` (99,96 MHz) comme horloge micros, **sans second MMCM** (un second MMCM sur okClk echoue au placement : Place 30-718, cascade MMCM -> BUFGCE -> 2 MMCM) ; horloge PDM = 99,96 / 22 = 4,544 MHz (maxi du micro : 4,8 MHz), fs = 189,3 kS/s, `mic_subsystem`, les endpoints FrontPanel et les ports `mic_clk` / `mic_data[31:0]`, `mic_pins.xdc` et `mic_timing.xdc`. Points a verifier au premier essai : noms des pins d'interface du FrontPanel (`wirein01`, `wireout20..22`, `btpipeouta1`), parametres du FIFO, DRC de banque (VIO3).
+Sans `with_mics`, le projet camera est inchange. Le script ajoute : le FIFO audio (horloges independantes, 32768 x 32 = 128 Kio, ~3,6 ms de flux), la sortie `clk_wiz_0/clk_out2` (99,96 MHz) comme horloge micros, **sans second MMCM** (un second MMCM sur okClk echoue au placement : Place 30-718, cascade MMCM -> BUFGCE -> 2 MMCM) ; horloge PDM = 99,96 / 22 = 4,544 MHz (maxi du micro : 4,8 MHz), fs = 189,3 kS/s, `mic_subsystem`, les endpoints FrontPanel et les ports `mic_clk` / `mic_data[31:0]`, `mic_pins.xdc` et `mic_timing.xdc`. Points a verifier au premier essai : noms des pins d'interface du FrontPanel (`wirein01`, `wireout20..22`, `btpipeouta1`), parametres du FIFO, DRC de banque (VIO3).
 Mise en service : VIO3 = 1,8 V, ecrire WireIn 0x01 = reset (0x2) puis enable | SD<<8 (SD = 7 au depart), lire WireOut 0x20 (bit0 run), puis lire la pipe 0xA1 avec le meme bloc que `BLOCK_WORDS` de `mic_subsystem` (defaut 256 mots = 1024 octets, comme la video ; le PC lit des multiples de 4096 octets = 1 paquet).
 Le debut de trame video est detecte par `axis_sof_monitor.v` (observateur AXI-Stream sur le flux vers le VDMA, simulation `sim/tb_sof.v` OK) : `add_mics.tcl` le branche sur `axi_vdma_0/S_AXIS_S2MM` ; si ce branchement echoue, le script le signale et tient `vsof` a 0 (`vcnt` reste 0).
 
@@ -92,3 +92,11 @@ Repliement : tons a 125 et 140 kHz attenues d'environ 73 dB une fois replies. La
 | MicData30 | 11 | B87_L4N | J14 | 87 |
 | MicData31 | 13 | B87_L12P | B14 | 87 |
 | MicData32 | 15 | B87_L12N | A14 | 87 |
+
+## Appli TypeScript (`Software/FP-Platform`)
+- `src/AudioStream.ts` : decodage des paquets, WAV RF64 64 canaux 24 bits **par segments** (60 s par defaut), CSV d'horodatage, trous remplaces par du silence, fenetre d'affichage ; testé en Node (`npm run test:audio`, relu par `ffprobe`).
+- `src/AudioPipe.ts` : pipe 0xA1 + WireIn 0x01 / WireOut 0x20-0x23 ; `micPresent()` verifie que le bitfile contient les micros (sinon lire la pipe bloquerait la file du device).
+- `src/OpfsStorage.ts` : l'hote FrontPanel refuse `showSaveFilePicker` / `showDirectoryPicker` ; on ecrit dans l'OPFS (~320 Mo/s, quota ~6 Go) et on exporte chaque segment termine par `<a download>` (un `File` de l'OPFS, pas un Blob en memoire : celui-ci arrive vide). Les 4 derniers fichiers exportes restent dans l'OPFS puis sont supprimes.
+- `src/AudioPanel.tsx` : bouton « Audio » (en bas a gauche) -> panneau avec demarrage/arret des micros, 64 formes d'onde glissantes (8 x 8, enveloppe min/max, fenetre 5/20/100 ms, gain x1..x512), enregistrement.
+- **Entrelacement audio/video** : une image video est lue en un seul transfert de plusieurs dizaines de ms, alors que le FIFO audio ne contient que quelques ms. `AxiStreamOverClassicDataPort` lit donc les gros transferts par tranches de 128 Kio et appelle `AudioRecorder.pump()` entre deux tranches (lecture de ce qui est disponible, sans attente, grace a l'occupation du FIFO lue sur le WireOut 0x23). Sans cela, presque tous les paquets audio seraient perdus des que la video tourne.
+- Non teste sur le materiel (le gateware micros n'est pas encore construit/valide).

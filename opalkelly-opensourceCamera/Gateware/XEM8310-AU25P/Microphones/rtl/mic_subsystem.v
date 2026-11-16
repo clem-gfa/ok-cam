@@ -3,6 +3,7 @@
 //   WireIn  0x01 : bit0 = enable, bit1 = reset, bits[15:8] = delai d'echantillonnage (cycles de clk)
 //   WireOut 0x20 : bit0 = run, bit1 = ultra, bit2 = locked, bit3 = fifo plein vu (collant)
 //   WireOut 0x21 : paquets abandonnes ;  WireOut 0x22 : overruns du paquetiseur
+//   WireOut 0x23 : occupation du FIFO audio (mots de 32 bits disponibles a la lecture)
 // Domaines : clk (horloge micros = clk_out2 de clk_wiz_0, 99,96 MHz), ok_clk (okClk, registres FrontPanel et lecture du FIFO), vclk (video).
 module mic_subsystem #(
     parameter DIV_STD        = 44,     // 99,96 MHz / 44 = 2,272 MHz (mode standard)
@@ -26,6 +27,8 @@ module mic_subsystem #(
     output wire [31:0] wo21_ep_datain_mic_dropped,
     (* X_INTERFACE_INFO = "opalkelly.com:interface:wireout:1.0 wireout22_mic_overruns EP_DATAIN" *)
     output wire [31:0] wo22_ep_datain_mic_overruns,
+    (* X_INTERFACE_INFO = "opalkelly.com:interface:wireout:1.0 wireout23_mic_level EP_DATAIN" *)
+    output wire [31:0] wo23_ep_datain_mic_level,
 
     (* X_INTERFACE_INFO = "opalkelly.com:interface:btpipeout:1.0 btpipeout_audio EP_DATAIN" *)
     output wire [31:0] btpo_ep_datain_audio,
@@ -65,9 +68,9 @@ module mic_subsystem #(
 
     // ---- paquets -> FIFO ----------------------------------------------------------------------
     wire [31:0] tdata; wire tvalid, tlast, tready;
-    wire [11:0] wr_cnt, rd_cnt;
+    wire [14:0] wr_cnt, rd_cnt;
     wire        full, empty;
-    wire space_ok = (12'd4095 - wr_cnt) >= 12'd1024;       // FIFO de 4095 mots utiles
+    wire space_ok = (15'd32767 - wr_cnt) >= 15'd1024;      // FIFO de 32767 mots utiles (128 Kio, ~3,6 ms de flux)
     wire [31:0] overruns, dropped;
     audio_packetizer #(.CH(64), .W(24), .NS(21)) u_pkt (
         .clk(clk), .rst(rst), .run(run), .in(fir), .in_valid(fir_v), .ts(ts), .vts(vts), .vcnt(vcnt),
@@ -86,6 +89,7 @@ module mic_subsystem #(
     reg rdy;
     always @(posedge ok_clk) rdy <= (rd_cnt >= BLOCK_WORDS);
     assign btpo_ep_ready_audio = rdy;
+    assign wo23_ep_datain_mic_level = {17'd0, rd_cnt};
 
     // ---- statut (clk -> okClk) ---------------------------------------------------------------
     reg full_seen;

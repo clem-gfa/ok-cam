@@ -6,7 +6,7 @@ module tb_mic_subsystem;
     reg okclk = 0; always #4.9603 okclk = ~okclk; // 100.8 MHz
     reg vclk = 0; always #5.002 vclk = ~vclk;
     reg [31:0] ctrl = 32'h2;      // reset logiciel au depart
-    wire [31:0] st, dropped, overruns, pipe_dout; wire ready;
+    wire [31:0] st, dropped, overruns, pipe_dout, level; wire ready;
     reg rd = 0;
     wire mic_clk; tri0 [31:0] dat;
 
@@ -14,7 +14,7 @@ module tb_mic_subsystem;
         .clk(clk), .locked(1'b1), .ok_clk(okclk), .vclk(vclk), .vsof(1'b0),
         .wi01_ep_dataout_mic_ctrl(ctrl), .wo20_ep_datain_mic_status(st),
         .wo21_ep_datain_mic_dropped(dropped), .wo22_ep_datain_mic_overruns(overruns),
-        .btpo_ep_datain_audio(pipe_dout), .btpo_ep_read_audio(rd), .btpo_ep_blockstrobe_audio(1'b0), .btpo_ep_ready_audio(ready),
+        .btpo_ep_datain_audio(pipe_dout), .btpo_ep_read_audio(rd), .btpo_ep_blockstrobe_audio(1'b0), .btpo_ep_ready_audio(ready), .wo23_ep_datain_mic_level(level),
         .mic_clk_o(mic_clk), .mic_data_i(dat));
 
     // micros (meme modele que tb_mic_front)

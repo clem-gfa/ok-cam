@@ -57,6 +57,7 @@ const DEFAULT_SOFTWARE_TIMEOUT_MS = 5000;
 // ============================================================
 const STREAM_PIPE_ADDRESS = 0xa0;
 const STREAM_BLOCK_SIZE = 1024;
+const STREAM_SLICE_BYTES = 128 * 1024; // multiple of the block size
 
 /**
  * AXI-Lite interface backed by Classic FrontPanel endpoints via a
@@ -189,12 +190,39 @@ export class AxiLiteOverClassicDataPort implements IAxiLite {
  */
 export class AxiStreamOverClassicDataPort implements IAxiStream {
     private readonly _dataPort: IFPGADataPortClassic;
+    private _betweenChunks: (() => Promise<void>) | null = null;
 
     constructor(dataPort: IFPGADataPortClassic) {
         this._dataPort = dataPort;
     }
 
+    /**
+     * Registers a function called between slices of every large transfer. A video frame is read in one
+     * transfer that keeps the USB pipe busy for tens of ms; the microphone FIFO only holds a few ms of
+     * data, so the audio is serviced between slices of STREAM_SLICE_BYTES. Pass null to read in one piece.
+     */
+    setBetweenChunksHook(hook: (() => Promise<void>) | null): void {
+        this._betweenChunks = hook;
+    }
+
     async read(buffer: DataBuffer, timeoutMs: number): Promise<void> {
+        const hook = this._betweenChunks;
+        if (!hook) {
+            await this.readSlice(buffer, timeoutMs);
+            return;
+        }
+        const bytes =
+            buffer instanceof ArrayBuffer
+                ? new Uint8Array(buffer)
+                : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        for (let offset = 0; offset < bytes.byteLength; offset += STREAM_SLICE_BYTES) {
+            const end = Math.min(offset + STREAM_SLICE_BYTES, bytes.byteLength);
+            await this.readSlice(bytes.subarray(offset, end), timeoutMs);
+            if (end < bytes.byteLength) await hook();
+        }
+    }
+
+    private async readSlice(buffer: DataBuffer, timeoutMs: number): Promise<void> {
         const readPromise = this._dataPort.readFromBlockPipeOut(
             STREAM_PIPE_ADDRESS,
             STREAM_BLOCK_SIZE,

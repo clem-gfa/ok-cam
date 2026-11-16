@@ -16,6 +16,7 @@ import {
     IDevice,
     IDeviceInfo,
     IFPGAConfiguration,
+    IFPGADataPortClassic,
     WorkQueue,
     DataProgressCallback,
     ByteCount,
@@ -29,6 +30,7 @@ import FrontPanelLogo from "../assets/images/logo512.png";
 
 import CameraView, { CameraProductModel } from "./CameraView";
 import FileWriteProbe from "./FileWriteProbe";
+import AudioPanel from "./AudioPanel";
 import { CameraMode } from "./CameraTypes";
 
 import { IISP } from "./IISP";
@@ -110,6 +112,9 @@ const CAMERA_MODE_MAP: Record<DeviceConfiguration, CameraMode> = {
 };
 
 type CameraSystem = {
+    // Microphone panel (XEM8310 only): the Classic data port and its AXI-Stream wrapper
+    classicDataPort?: IFPGADataPortClassic;
+    classicStream?: AxiStreamOverClassicDataPort;
     sequencer: CapturePipelineSequencer;
     isp: IISP;
     tpg: ITPG;
@@ -185,7 +190,12 @@ function App() {
             return DeviceConfiguration.XEM8320_TPG;
         };
 
-        const loadAxiInterfaces = async (device: IDevice, config: DeviceConfiguration): Promise<{ axiLite: IAxiLite; axiStream: IAxiStream }> => {
+        const loadAxiInterfaces = async (device: IDevice, config: DeviceConfiguration): Promise<{
+            axiLite: IAxiLite;
+            axiStream: IAxiStream;
+            classicDataPort?: IFPGADataPortClassic;
+            classicStream?: AxiStreamOverClassicDataPort;
+        }> => {
             const mode = CAMERA_MODE_MAP[config];
 
             switch (config) {
@@ -196,9 +206,12 @@ function App() {
                 case DeviceConfiguration.XEM8310_TPG: {
                     console.log(`Loading Classic data port (${mode})`);
                     const classicDataPort = await device.getFPGADataPortClassic();
+                    const classicStream = new AxiStreamOverClassicDataPort(classicDataPort);
                     return {
                         axiLite: new AxiLiteOverClassicDataPort(classicDataPort),
-                        axiStream: new AxiStreamOverClassicDataPort(classicDataPort),
+                        axiStream: classicStream,
+                        classicDataPort,
+                        classicStream,
                     };
                 }
                 case DeviceConfiguration.HUB1450_SZG_Camera:
@@ -329,7 +342,7 @@ function App() {
                 try {
                     
                     await initializeDevice(device, config);
-                    const { axiLite, axiStream } = await loadAxiInterfaces(device, config);
+                    const { axiLite, axiStream, classicDataPort, classicStream } = await loadAxiInterfaces(device, config);
                     const mode = CAMERA_MODE_MAP[config];
 
                     // Create IP core drivers (shared between sequencer and UI)
@@ -357,7 +370,7 @@ function App() {
 
                     const sequencer = new CapturePipelineSequencer(axiLite, axiStream, mode, isp, tpg, control, DeviceWorkQueue);
 
-                    setCameraSystem({ sequencer, isp, tpg, control, mode });
+                    setCameraSystem({ sequencer, isp, tpg, control, mode, classicDataPort, classicStream });
                 }
                 catch(error) {
                     const isTPG = config === DeviceConfiguration.HUB1450_TPG || config === DeviceConfiguration.XEM8320_TPG || config === DeviceConfiguration.XEM8310_TPG;
@@ -428,6 +441,13 @@ function App() {
                     cameraMode={cameraSystem.mode}
                 />
                 <FileWriteProbe />
+                {cameraSystem.mode === "imx219" && cameraSystem.classicDataPort && cameraSystem.classicStream && (
+                    <AudioPanel
+                        dataPort={cameraSystem.classicDataPort}
+                        stream={cameraSystem.classicStream}
+                        workQueue={DeviceWorkQueue}
+                    />
+                )}
             </div>
         );
     } else {
