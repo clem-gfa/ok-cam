@@ -32,58 +32,16 @@ if {![info exists mic_ring_aw]} { set mic_ring_aw 14 }
 # --- sources -------------------------------------------------------------------------------
 add_files -norecurse [list \
     $mic_rtl/mic_clkgen.v $mic_rtl/pdm_capture.v $mic_rtl/cic_bank.v $mic_rtl/fir_bank.v \
-    $mic_rtl/audio_packetizer.v $mic_rtl/ts_unit.v $mic_rtl/mic_subsystem.v $mic_rtl/audio_ddr_ring.v $mic_rtl/axis_sof_monitor.v $mic_rtl/fir_coeffs.vh]
+    $mic_rtl/audio_packetizer.v $mic_rtl/ts_unit.v $mic_rtl/mic_subsystem.v $mic_rtl/audio_ddr_ring.v $mic_rtl/fifo_audio_stage.v $mic_rtl/fifo_audio_out.v $mic_rtl/axis_sof_monitor.v $mic_rtl/fir_coeffs.vh]
 set_property file_type {Verilog Header} [get_files fir_coeffs.vh]
 set_property is_global_include true [get_files fir_coeffs.vh]
 set_property include_dirs [list [file normalize $mic_rtl]] [current_fileset]
 
 if {$mic_use_ddr} {
-    # Les parametres du FIFO Generator se configurent EN TROIS ETAPES : Output_Data_Width (largeur de lecture differente de
-    # celle d'ecriture) n'est active qu'apres le choix de l'implementation a horloges independantes, et la largeur des
-    # compteurs depend de la profondeur de lecture qui depend elle-meme de la largeur de lecture.
-
-    # FIFO d'entree : 32 bits (horloge micros) -> 128 bits FWFT (horloge utilisateur de la DDR4), 2048 mots d'entree
-    create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_audio_stage
-    set_property CONFIG.Fifo_Implementation {Independent_Clocks_Block_RAM} [get_ips fifo_audio_stage]
-    set_property -dict [list \
-      CONFIG.Performance_Options {First_Word_Fall_Through} \
-      CONFIG.Input_Data_Width {32} \
-      CONFIG.Input_Depth {2048} \
-      CONFIG.Output_Data_Width {128} \
-      CONFIG.Reset_Pin {true} \
-      CONFIG.Read_Data_Count {true} \
-      CONFIG.Write_Data_Count {true} \
-    ] [get_ips fifo_audio_stage]
-    set_property -dict [list \
-      CONFIG.Read_Data_Count_Width {9} \
-      CONFIG.Write_Data_Count_Width {11} \
-    ] [get_ips fifo_audio_stage]
-
-    # FIFO de sortie : 128 bits (horloge DDR4) -> 32 bits (okClk), 2048 beats = 8192 mots, lecture non FWFT comme la video
-    create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_audio_out
-    set_property CONFIG.Fifo_Implementation {Independent_Clocks_Block_RAM} [get_ips fifo_audio_out]
-    set_property -dict [list \
-      CONFIG.Input_Data_Width {128} \
-      CONFIG.Input_Depth {2048} \
-      CONFIG.Output_Data_Width {32} \
-      CONFIG.Reset_Pin {true} \
-      CONFIG.Use_Embedded_Registers {false} \
-      CONFIG.Read_Data_Count {true} \
-      CONFIG.Write_Data_Count {true} \
-    ] [get_ips fifo_audio_out]
-    set_property -dict [list \
-      CONFIG.Read_Data_Count_Width {13} \
-      CONFIG.Write_Data_Count_Width {11} \
-    ] [get_ips fifo_audio_out]
-
-    # Controle : les profondeurs/largeurs effectives doivent etre celles attendues par audio_ddr_ring / mic_subsystem
-    foreach {ip exp_w exp_r} {fifo_audio_stage 32 128 fifo_audio_out 128 32} {
-        set got_w [get_property CONFIG.Input_Data_Width [get_ips $ip]]
-        set got_r [get_property CONFIG.Output_Data_Width [get_ips $ip]]
-        if {$got_w != $exp_w || $got_r != $exp_r} {
-            error "$ip : largeurs $got_w -> $got_r au lieu de $exp_w -> $exp_r (FIFO asymetrique non applique)"
-        }
-    }
+    # Les deux FIFO du chemin DDR4 (32 -> 128 bits et 128 -> 32 bits, horloges independantes) sont des macros XPM
+    # (rtl/fifo_audio_stage.v, rtl/fifo_audio_out.v) : l'IP FIFO Generator de cette version refuse une largeur de
+    # lecture differente de la largeur d'ecriture par script (Output_Data_Width desactive). Rien a configurer ici.
+    set_property XPM_LIBRARIES {XPM_FIFO} [current_project]
 } else {
 # FIFO audio : horloges independantes (ecriture = horloge micros, lecture = okClk), 2^mic_fifo_aw x 32, non FWFT.
 # Profond a dessein : l'appli lit la video par tranches et ne lit l'audio qu'entre deux tranches.

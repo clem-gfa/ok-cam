@@ -15,8 +15,8 @@
 module audio_ddr_ring #(
     parameter [31:0] RING_BASE  = 32'hA0000000,
     parameter        RING_AW    = 14,            // 2^14 paquets x 4 Kio = 64 Mio
-    parameter        STG_CNT_W  = 9,             // largeur de stg_avail (beats lisibles du FIFO d'entree)
-    parameter        OUT_CNT_W  = 11,            // largeur de out_wr_count (beats du FIFO de sortie)
+    parameter        STG_CNT_W  = 10,            // largeur de stg_avail (beats lisibles du FIFO d'entree)
+    parameter        OUT_CNT_W  = 12,            // largeur de out_wr_count (beats du FIFO de sortie)
     parameter        OUT_DEPTH  = 2048           // profondeur du FIFO de sortie en beats
 ) (
     input  wire                 clk,

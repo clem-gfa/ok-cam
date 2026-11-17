@@ -166,22 +166,23 @@ module mic_subsystem #(
         wire ring_idle;
         (* ASYNC_REG = "TRUE" *) reg [1:0] idl;
         always @(posedge clk) idl <= {idl[0], ring_idle};
-        wire fifo_rst = rst & idl[1];
+        wire fifo_rst_stage = rst & idl[1];                 // domaine clk (wr_clk du FIFO d'entree)
+
 
         // ---- FIFO d'entree : 32 bits (clk) -> 128 bits FWFT (ui_clk), 2048 mots ----
         wire [127:0] stg_dout; wire stg_empty, stg_full, stg_rd_en;
-        wire [10:0] stg_wcnt; wire [8:0] stg_rcnt;
+        wire [11:0] stg_wcnt; wire [9:0] stg_rcnt;
         assign tready = ~stg_full;
         fifo_audio_stage u_stage (
-            .rst(fifo_rst), .wr_clk(clk), .rd_clk(ui_clk),
+            .rst(fifo_rst_stage), .wr_clk(clk), .rd_clk(ui_clk),
             .din(tdata), .wr_en(tvalid & tready), .rd_en(stg_rd_en),
             .dout(stg_dout), .full(stg_full), .empty(stg_empty),
             .wr_data_count(stg_wcnt), .rd_data_count(stg_rcnt));
 
         // ---- anneau en DDR4 ----
-        wire [127:0] out_din; wire out_wr_en, out_full, out_empty; wire [10:0] out_wcnt; wire [12:0] out_rcnt;
+        wire [127:0] out_din; wire out_wr_en, out_full, out_empty; wire [11:0] out_wcnt; wire [13:0] out_rcnt;
         wire ring_space_ui; wire [15:0] used_ui, peak_ui, axi_err;
-        audio_ddr_ring #(.RING_BASE({RING_BASE_HI[15:0], 16'h0000}), .RING_AW(RING_AW), .STG_CNT_W(9), .OUT_CNT_W(11), .OUT_DEPTH(2048)) u_ring (
+        audio_ddr_ring #(.RING_BASE({RING_BASE_HI[15:0], 16'h0000}), .RING_AW(RING_AW), .STG_CNT_W(10), .OUT_CNT_W(12), .OUT_DEPTH(2048)) u_ring (
             .clk(ui_clk), .aresetn(ui_aresetn), .rst_req(rst_req_ui),
             .stg_dout(stg_dout), .stg_empty(stg_empty), .stg_avail(stg_rcnt), .stg_rd_en(stg_rd_en),
             .out_din(out_din), .out_wr_en(out_wr_en), .out_full(out_full), .out_wr_count(out_wcnt),
@@ -197,20 +198,21 @@ module mic_subsystem #(
             .idle(ring_idle), .space_ok(ring_space_ui), .used_pkts(used_ui), .peak_pkts(peak_ui), .axi_errors(axi_err));
 
         // ---- FIFO de sortie : 128 bits (ui_clk) -> 32 bits (okClk), 2048 beats = 8192 mots ----
+        wire fifo_rst_out = rst_req_ui & ring_idle;           // domaine ui_clk (wr_clk du FIFO de sortie)
         fifo_audio_out u_out (
-            .rst(fifo_rst), .wr_clk(ui_clk), .rd_clk(ok_clk),
+            .rst(fifo_rst_out), .wr_clk(ui_clk), .rd_clk(ok_clk),
             .din(out_din), .wr_en(out_wr_en), .rd_en(btpo_ep_read_audio),
             .dout(btpo_ep_datain_audio), .full(out_full), .empty(out_empty),
             .wr_data_count(out_wcnt), .rd_data_count(out_rcnt));
         reg rdy;
         always @(posedge ok_clk) rdy <= (out_rcnt >= BLOCK_WORDS);
         assign btpo_ep_ready_audio = rdy;
-        assign wo23_ep_datain_mic_level = {19'd0, out_rcnt};
+        assign wo23_ep_datain_mic_level = {18'd0, out_rcnt};
 
         // ---- un paquet n'est ecrit que s'il y a de la place dans l'anneau ET dans le FIFO d'entree ----
         (* ASYNC_REG = "TRUE" *) reg [1:0] sp;
         always @(posedge clk) sp <= {sp[0], ring_space_ui};
-        assign space_ok = sp[1] && (stg_wcnt < 11'd1024);
+        assign space_ok = sp[1] && (stg_wcnt < 12'd1024);
         assign full_flag = ~sp[1];                      // « anneau plein vu »
 
         // ---- statut de l'anneau (ui_clk -> okClk, en code de Gray) ----

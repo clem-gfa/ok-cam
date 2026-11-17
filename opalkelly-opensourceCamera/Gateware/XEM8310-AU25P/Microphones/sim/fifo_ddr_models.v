@@ -5,13 +5,13 @@ module fifo_audio_stage (
     input  wire        rst, wr_clk, rd_clk,
     input  wire [31:0] din, input wire wr_en, input wire rd_en,
     output wire [127:0] dout, output wire full, output wire empty,
-    output wire [10:0] wr_data_count, output wire [8:0] rd_data_count
+    output wire [11:0] wr_data_count, output wire [9:0] rd_data_count
 );
     reg [31:0] mem [0:2047];
     integer wp = 0, rp = 0;                        // en mots (rp : multiple de 4)
     wire [12:0] words = wp - rp;
     assign empty = (words < 4), full = (words >= 2048);
-    assign wr_data_count = words[10:0] | (words[11] ? 11'h7FF : 11'h0);
+    assign wr_data_count = words;
     assign rd_data_count = (words >> 2);
     assign dout = {mem[(rp+3) % 2048], mem[(rp+2) % 2048], mem[(rp+1) % 2048], mem[rp % 2048]};
     always @(posedge wr_clk) begin
@@ -27,14 +27,14 @@ module fifo_audio_out (
     input  wire         rst, wr_clk, rd_clk,
     input  wire [127:0] din, input wire wr_en, input wire rd_en,
     output reg  [31:0]  dout, output wire full, output wire empty,
-    output wire [10:0]  wr_data_count, output wire [12:0] rd_data_count
+    output wire [11:0]  wr_data_count, output wire [13:0] rd_data_count
 );
     reg [31:0] mem [0:8191];
     integer wp = 0, rp = 0;                        // en mots
     wire [13:0] words = wp - rp;
     assign empty = (words == 0), full = (words > 8192 - 4);
     assign wr_data_count = (words >> 2);
-    assign rd_data_count = words[12:0];
+    assign rd_data_count = words[13:0];
     always @(posedge wr_clk) begin
         if (rst) wp <= 0;
         else if (wr_en && !full) begin
