@@ -175,7 +175,7 @@ module mic_subsystem #(
         (* ASYNC_REG = "TRUE" *) reg [1:0] sp;
         always @(posedge clk) sp <= {sp[0], ring_space_ui};
         assign space_ok = sp[1] && (stg_wcnt < 12'd1024);
-        assign full_flag = ~sp[1];                      // « anneau plein vu »
+        assign full_flag = run & ~sp[1];                  // « anneau plein vu » (seulement une fois le flux etabli)
 
         // ---- statut de l'anneau (ui_clk -> okClk, en code de Gray) ----
         reg [31:0] gring;
