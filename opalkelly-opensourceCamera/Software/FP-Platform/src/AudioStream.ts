@@ -117,6 +117,10 @@ export interface AudioStats {
     segments: number; // closed segments of the current recording
     maxGapMs: number; // longest time between two pump() calls (host stalls; the gateware FIFO holds ~3.6 ms)
     longGaps: number; // number of gaps longer than 3 ms
+    readMs: number; // time spent waiting on / reading the pipe (USB), cumulative
+    decodeMs: number; // time spent decoding and recording packets, cumulative
+    skippedPackets: number; // packets read but not decoded (catch-up mode)
+    elapsedMs: number; // wall time since start()
 }
 
 export interface AudioRecorderOptions {
@@ -124,6 +128,13 @@ export interface AudioRecorderOptions {
     ringFrames?: number; // frames kept for the display
     segmentSeconds?: number; // a recording is cut into files of this duration
     maxPacketsPerRead?: number;
+    /** Keep the raw samples of the last `ringFrames` frames (recent()); the display only needs the min/max peaks. Default true. */
+    keepRaw?: boolean;
+    /**
+     * When not recording and the gateware FIFO is nearly full (the PC is behind), read the packets but only decode the
+     * last one of each read, so the live display catches up instead of showing old audio. Default false.
+     */
+    catchUp?: boolean;
     /** Runs a device operation on the (serialised) device queue. Default: run directly. */
     runOnDevice?: (task: () => Promise<void>) => Promise<void>;
     /** Called once a segment (wav + csv) is closed, e.g. to export it. */
@@ -144,7 +155,10 @@ export class AudioRecorder {
     private readonly _pipe: IAudioPipe;
     private readonly _sampleRate: number;
     private readonly _ringFrames: number;
-    private readonly _ring: Int32Array; // interleaved frames, 64 values each
+    private readonly _ring: Int32Array; // interleaved frames, 64 values each (empty without keepRaw)
+    private readonly _keepRaw: boolean;
+    private readonly _catchUp: boolean;
+    private _startTime = 0;
     private _ringHead = 0;
     private _ringFill = 0;
     // Per-channel min/max of blocks of AUDIO_PEAK_BLOCK frames: the display reads these instead of the raw
@@ -177,7 +191,9 @@ export class AudioRecorder {
         const tickHz = options.tickHz ?? AUDIO_TICK_HZ;
         this._sampleRate = Math.round(tickHz / AUDIO_TICKS_PER_FRAME);
         this._ringFrames = options.ringFrames ?? 65536;
-        this._ring = new Int32Array(this._ringFrames * AUDIO_CHANNELS);
+        this._keepRaw = options.keepRaw ?? true;
+        this._catchUp = options.catchUp ?? false;
+        this._ring = new Int32Array(this._keepRaw ? this._ringFrames * AUDIO_CHANNELS : 0);
         this._peakBlocks = Math.floor(this._ringFrames / AUDIO_PEAK_BLOCK);
         this._peakMin = new Int32Array(this._peakBlocks * AUDIO_CHANNELS);
         this._peakMax = new Int32Array(this._peakBlocks * AUDIO_CHANNELS);
@@ -189,14 +205,14 @@ export class AudioRecorder {
     }
 
     private static emptyStats(): AudioStats {
-        return { packets: 0, lostPackets: 0, badBlocks: 0, frames: 0, lastSeq: 0, recordedFrames: 0, segments: 0, maxGapMs: 0, longGaps: 0 };
+        return { packets: 0, lostPackets: 0, badBlocks: 0, frames: 0, lastSeq: 0, recordedFrames: 0, segments: 0, maxGapMs: 0, longGaps: 0, readMs: 0, decodeMs: 0, skippedPackets: 0, elapsedMs: 0 };
     }
 
     get sampleRate(): number {
         return this._sampleRate;
     }
     get stats(): AudioStats {
-        return { ...this._stats };
+        return { ...this._stats, elapsedMs: this._startTime > 0 ? performance.now() - this._startTime : 0 };
     }
     get error(): string | null {
         return this._error;
@@ -218,15 +234,26 @@ export class AudioRecorder {
             if (gap > 3) this._stats.longGaps++;
         }
         this._lastPump = now;
+        const t0 = performance.now();
         const words = await this._pipe.available();
         let packets = Math.floor(words / (AUDIO_PACKET_BYTES / 4));
         if (packets > this._maxPackets) packets = this._maxPackets;
-        if (packets === 0) return 0;
+        if (packets === 0) {
+            this._stats.readMs += performance.now() - t0;
+            return 0;
+        }
         const chunk = this._buffer.subarray(0, packets * AUDIO_PACKET_BYTES);
         await this._pipe.read(chunk);
+        const t1 = performance.now();
+        this._stats.readMs += t1 - t0;
+        // The gateware FIFO is nearly full: the PC is behind. Without a recording, only the newest packet is decoded.
+        const behind = this._catchUp && !this._rec && words >= (this._maxPackets - 4) * (AUDIO_PACKET_BYTES / 4);
         for (let i = 0; i < packets; i++) {
-            await this.handle(chunk.subarray(i * AUDIO_PACKET_BYTES, (i + 1) * AUDIO_PACKET_BYTES));
+            const pkt = chunk.subarray(i * AUDIO_PACKET_BYTES, (i + 1) * AUDIO_PACKET_BYTES);
+            if (behind && i < packets - 1) this.skipPacket(pkt);
+            else await this.handle(pkt);
         }
+        this._stats.decodeMs += performance.now() - t1;
         return packets;
     }
 
@@ -238,8 +265,12 @@ export class AudioRecorder {
         this._error = null;
         this._expectSeq = false;
         this._lastPump = 0;
+        this._startTime = performance.now();
         this._stats.maxGapMs = 0;
         this._stats.longGaps = 0;
+        this._stats.readMs = 0;
+        this._stats.decodeMs = 0;
+        this._stats.skippedPackets = 0;
         void (async () => {
             try {
                 while (!this._stopRequested) {
@@ -276,6 +307,7 @@ export class AudioRecorder {
 
     /** The last up-to-`maxFrames` samples of one channel (24-bit, sign-extended), oldest first. */
     recent(channel: number, maxFrames: number): Int32Array {
+        if (!this._keepRaw) return new Int32Array(0);
         const n = Math.min(maxFrames, this._ringFill);
         const out = new Int32Array(n);
         const start = (this._ringHead + this._ringFrames - n) % this._ringFrames;
@@ -309,8 +341,12 @@ export class AudioRecorder {
      */
     async pumpBlocking(): Promise<number> {
         const one = this._buffer.subarray(0, AUDIO_PACKET_BYTES);
+        const t0 = performance.now();
         await this._pipe.read(one);
+        const t1 = performance.now();
+        this._stats.readMs += t1 - t0;
         await this.handle(one);
+        this._stats.decodeMs += performance.now() - t1;
         return 1;
     }
 
@@ -331,17 +367,34 @@ export class AudioRecorder {
         this._expectSeq = true;
         this._nextSeq = (h.seq + 1) >>> 0;
 
-        // display ring
+        // decode once: raw ring (optional) and per-block min/max peaks for the display
+        const keep = this._keepRaw;
+        const pay = h.payload;
+        const accMin = this._accMin;
+        const accMax = this._accMax;
         for (let i = 0; i < h.nsamp; i++) {
-            const base = this._ringHead * AUDIO_CHANNELS;
             const f = i * AUDIO_FRAME_BYTES;
+            const base = this._ringHead * AUDIO_CHANNELS;
+            const first = this._accCount === 0;
             for (let c = 0; c < AUDIO_CHANNELS; c++) {
                 const o = f + c * 3;
-                this._ring[base + c] = ((h.payload[o] | (h.payload[o + 1] << 8) | (h.payload[o + 2] << 16)) << 8) >> 8;
+                const v = ((pay[o] | (pay[o + 1] << 8) | (pay[o + 2] << 16)) << 8) >> 8;
+                if (keep) this._ring[base + c] = v;
+                if (first || v < accMin[c]) accMin[c] = v;
+                if (first || v > accMax[c]) accMax[c] = v;
             }
-            this._ringHead = (this._ringHead + 1) % this._ringFrames;
-            if (this._ringFill < this._ringFrames) this._ringFill++;
-            this.accumulatePeaks(base);
+            if (keep) {
+                this._ringHead = (this._ringHead + 1) % this._ringFrames;
+                if (this._ringFill < this._ringFrames) this._ringFill++;
+            }
+            if (++this._accCount >= AUDIO_PEAK_BLOCK) {
+                const o = this._peakHead * AUDIO_CHANNELS;
+                this._peakMin.set(accMin, o);
+                this._peakMax.set(accMax, o);
+                this._peakHead = (this._peakHead + 1) % this._peakBlocks;
+                if (this._peakFill < this._peakBlocks) this._peakFill++;
+                this._accCount = 0;
+            }
         }
 
         if (this._rec) await this.record(h, lostFrames);
@@ -351,20 +404,20 @@ export class AudioRecorder {
         this._stats.lastSeq = h.seq;
     }
 
-    private accumulatePeaks(base: number): void {
-        const first = this._accCount === 0;
-        for (let c = 0; c < AUDIO_CHANNELS; c++) {
-            const v = this._ring[base + c];
-            if (first || v < this._accMin[c]) this._accMin[c] = v;
-            if (first || v > this._accMax[c]) this._accMax[c] = v;
+    /** Counts a packet (sequence / loss tracking) without decoding its samples (catch-up mode). */
+    private skipPacket(p: Uint8Array): void {
+        const h = parseAudioPacket(p);
+        if (!h) {
+            this._stats.badBlocks++;
+            return;
         }
-        if (++this._accCount < AUDIO_PEAK_BLOCK) return;
-        const o = this._peakHead * AUDIO_CHANNELS;
-        this._peakMin.set(this._accMin, o);
-        this._peakMax.set(this._accMax, o);
-        this._peakHead = (this._peakHead + 1) % this._peakBlocks;
-        if (this._peakFill < this._peakBlocks) this._peakFill++;
-        this._accCount = 0;
+        if (this._expectSeq && h.seq !== this._nextSeq) this._stats.lostPackets += (h.seq - this._nextSeq) >>> 0;
+        this._expectSeq = true;
+        this._nextSeq = (h.seq + 1) >>> 0;
+        this._stats.packets++;
+        this._stats.frames += h.nsamp;
+        this._stats.skippedPackets++;
+        this._stats.lastSeq = h.seq;
     }
 
     private async record(h: AudioPacketInfo, lostFrames: number): Promise<void> {

@@ -174,6 +174,27 @@ async function main() {
         assert.strictEqual(r2.stats.packets, 1);
     }
 
+
+    // catch-up mode: PC behind (FIFO nearly full) and not recording -> only the newest packet of each read is decoded,
+    // sequence / loss tracking stays exact
+    {
+        const p3 = new FakePipe();
+        const lostSet = new Set([3, 4, 20]);
+        for (let q = 0; q < 40; q++) if (!lostSet.has(q)) p3.queue.push(makePacket(q, 0, false));
+        const r3 = new AudioRecorder(p3, { ringFrames: 5000, catchUp: true, keepRaw: false });
+        while ((await r3.pump()) > 0) {
+            /* drain */
+        }
+        const st3 = r3.stats;
+        assert.strictEqual(st3.packets, 40 - lostSet.size);
+        assert.strictEqual(st3.lostPackets, lostSet.size);
+        assert.ok(st3.skippedPackets > 0, "behind: some packets must be skipped");
+        assert.ok(st3.skippedPackets < st3.packets);
+        assert.strictEqual(r3.recent(0, 10).length, 0); // no raw ring without keepRaw
+        const pk = new Int32Array(8);
+        assert.ok(r3.recentPeaks(0, 8, pk, new Int32Array(8)) > 0);
+    }
+
     // independent reader: ffprobe if installed
     try {
         const out = execFileSync(

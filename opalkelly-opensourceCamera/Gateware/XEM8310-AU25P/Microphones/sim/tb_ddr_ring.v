@@ -15,7 +15,7 @@ module tb_ddr_ring;
     fifo_audio_stage u_stg (.rst(1'b0), .wr_clk(clk), .rd_clk(uclk), .din(stg_din), .wr_en(stg_wr_en), .rd_en(stg_rd_en),
                             .dout(stg_dout), .full(stg_full), .empty(stg_empty), .wr_data_count(stg_wcnt), .rd_data_count(stg_rcnt));
     // FIFO de sortie
-    wire [127:0] out_din; wire out_wr_en, out_full, out_empty; wire [11:0] out_wcnt; wire [13:0] out_rcnt; wire [31:0] out_dout; reg out_rd_en = 0;
+    wire [127:0] out_din; wire out_wr_en, out_full, out_empty; wire [13:0] out_wcnt; wire [15:0] out_rcnt; wire [31:0] out_dout; reg out_rd_en = 0;
     fifo_audio_out u_out (.rst(1'b0), .wr_clk(uclk), .rd_clk(okclk), .din(out_din), .wr_en(out_wr_en), .rd_en(out_rd_en),
                           .dout(out_dout), .full(out_full), .empty(out_empty), .wr_data_count(out_wcnt), .rd_data_count(out_rcnt));
     // anneau + memoire
@@ -23,7 +23,7 @@ module tb_ddr_ring;
     wire awlock, arlock, awvalid, awready, wlast, wvalid, wready, bvalid, bready, arvalid, arready, rlast, rvalid, rready;
     wire [3:0] awcache, awqos, arcache, arqos; wire [127:0] wdata, rdata; wire [15:0] wstrb; wire [1:0] bresp, rresp;
     wire idle, space_ok; wire [15:0] used, peak, axierr;
-    audio_ddr_ring #(.RING_BASE(32'hA0000000), .RING_AW(RING_AW), .STG_CNT_W(10), .OUT_CNT_W(12)) dut (
+    audio_ddr_ring #(.RING_BASE(32'hA0000000), .RING_AW(RING_AW), .STG_CNT_W(10), .OUT_CNT_W(14), .OUT_DEPTH(8192)) dut (
         .clk(uclk), .aresetn(aresetn), .rst_req(rst_req),
         .stg_dout(stg_dout), .stg_empty(stg_empty), .stg_avail(stg_rcnt), .stg_rd_en(stg_rd_en),
         .out_din(out_din), .out_wr_en(out_wr_en), .out_full(out_full), .out_wr_count(out_wcnt),
@@ -73,7 +73,7 @@ module tb_ddr_ring;
             if (out_dout !== expect_w) begin errs = errs + 1; if (errs < 5) $display("ERREUR mot %0d : %h attendu %h", got, out_dout, expect_w); end
             got = got + 1;
         end
-        if (pk >= NPK && cycle > NPK * 3000 + 30000) begin
+        if (pk >= NPK && cycle > NPK * 3000 + 30000 && used == 0 && out_empty && stg_empty && !rd_d) begin
             $display("paquets : acceptes=%0d abandonnes=%0d ; mots lus=%0d (=%0d paquets) ; erreurs de donnees=%0d ; pic de l'anneau=%0d ; erreurs AXI modele=%0d, DUT=%0d ; idle=%b",
                      accepted, dropped, got, got / 1024, errs, peak, mem.errors, axierr, idle);
             if (errs == 0 && got == accepted * 1024 && dropped > 0 && peak >= 14 && mem.errors == 0 && axierr == 0) $display("OK");

@@ -51,6 +51,8 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue, vi
         if (!recorderRef.current) {
             const exporter = new OpfsExporter();
             recorderRef.current = new AudioRecorder(new AudioPipeOverClassicDataPort(dataPort), {
+                keepRaw: false, // the display uses the per-block peaks only
+                catchUp: true, // behind and not recording: show the newest audio instead of a growing delay
                 runOnDevice: (task) => workQueue.post(task),
                 onSegmentClosed: async (wav, csv) => {
                     await exporter.exportFile(wav);
@@ -292,6 +294,10 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue, vi
                                     packets {stats.packets} | lost {stats.lostPackets} (
                                     {((100 * stats.lostPackets) / Math.max(1, stats.packets + stats.lostPackets)).toFixed(1)}%) | bad {stats.badBlocks} |
                                     host gap max {stats.maxGapMs.toFixed(1)} ms, {stats.longGaps} over 3 ms
+                                    {stats.elapsedMs > 1000
+                                        ? ` | busy: pipe ${((100 * stats.readMs) / stats.elapsedMs).toFixed(0)}%, decode ${((100 * stats.decodeMs) / stats.elapsedMs).toFixed(0)}%, rate ${((stats.packets * 4096) / 1e6 / (stats.elapsedMs / 1000)).toFixed(1)} MB/s (need 36)`
+                                        : ""}
+                                    {stats.skippedPackets > 0 ? ` | skipped ${stats.skippedPackets} (catching up)` : ""}
                                     {recording || stats.segments > 0
                                         ? ` | rec ${(stats.recordedFrames / (recorderRef.current?.sampleRate ?? 1)).toFixed(1)} s, ${stats.segments} segment(s) exported`
                                         : ""}

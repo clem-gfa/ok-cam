@@ -22,29 +22,29 @@ module fifo_audio_stage (
     end
 endmodule
 
-// 128 bits (ecriture, wr_clk) -> 32 bits (lecture non FWFT, rd_clk). Profondeur d'ecriture : 2048 beats.
+// 128 bits (ecriture, wr_clk) -> 32 bits (lecture non FWFT, rd_clk). Profondeur d'ecriture : 8192 beats.
 module fifo_audio_out (
     input  wire         rst, wr_clk, rd_clk,
     input  wire [127:0] din, input wire wr_en, input wire rd_en,
     output reg  [31:0]  dout, output wire full, output wire empty,
-    output wire [11:0]  wr_data_count, output wire [13:0] rd_data_count
+    output wire [13:0]  wr_data_count, output wire [15:0] rd_data_count
 );
-    reg [31:0] mem [0:8191];
+    reg [31:0] mem [0:32767];
     integer wp = 0, rp = 0;                        // en mots
-    wire [13:0] words = wp - rp;
-    assign empty = (words == 0), full = (words > 8192 - 4);
+    wire [15:0] words = wp - rp;
+    assign empty = (words == 0), full = (words > 32768 - 4);
     assign wr_data_count = (words >> 2);
-    assign rd_data_count = words[13:0];
+    assign rd_data_count = words;
     always @(posedge wr_clk) begin
         if (rst) wp <= 0;
         else if (wr_en && !full) begin
-            mem[wp % 8192] <= din[31:0]; mem[(wp+1) % 8192] <= din[63:32];
-            mem[(wp+2) % 8192] <= din[95:64]; mem[(wp+3) % 8192] <= din[127:96];
+            mem[wp % 32768] <= din[31:0]; mem[(wp+1) % 32768] <= din[63:32];
+            mem[(wp+2) % 32768] <= din[95:64]; mem[(wp+3) % 32768] <= din[127:96];
             wp <= wp + 4;
         end
     end
     always @(posedge rd_clk) begin
-        if (rst) rp <= 0; else if (rd_en && !empty) begin dout <= mem[rp % 8192]; rp <= rp + 1; end
+        if (rst) rp <= 0; else if (rd_en && !empty) begin dout <= mem[rp % 32768]; rp <= rp + 1; end
     end
 endmodule
 

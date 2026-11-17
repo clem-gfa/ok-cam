@@ -59,7 +59,7 @@ module mic_subsystem #(
     input  wire [127:0] ring_out_din,
     input  wire         ring_out_wr_en,
     output wire         ring_out_full,
-    output wire [11:0]  ring_out_wr_count,
+    output wire [13:0]  ring_out_wr_count,
     output wire         ring_rst_req,
     input  wire         ring_idle,
     input  wire         ring_space_ok,
@@ -127,7 +127,7 @@ module mic_subsystem #(
         assign wo24_ep_datain_mic_ring = 32'd0;
         // pas d'acces DDR4
         assign ring_stg_dout = 128'd0; assign ring_stg_empty = 1'b1; assign ring_stg_avail = 10'd0;
-        assign ring_out_full = 1'b0; assign ring_out_wr_count = 12'd0; assign ring_rst_req = 1'b0;
+        assign ring_out_full = 1'b0; assign ring_out_wr_count = 14'd0; assign ring_rst_req = 1'b0;
     end else begin : g_ddr
         // ---- reset : les FIFO ne sont vides que lorsque l'anneau est au repos (jamais en pleine rafale AXI) ----
         (* ASYNC_REG = "TRUE" *) reg [1:0] rq;
@@ -151,7 +151,7 @@ module mic_subsystem #(
 
         // ---- liaison avec audio_ddr_ring (instance separee dans le block design) ----
         wire [127:0] out_din = ring_out_din; wire out_wr_en = ring_out_wr_en;
-        wire out_full, out_empty; wire [11:0] out_wcnt; wire [13:0] out_rcnt;
+        wire out_full, out_empty; wire [13:0] out_wcnt; wire [15:0] out_rcnt;
         assign ring_stg_dout = stg_dout; assign ring_stg_empty = stg_empty; assign ring_stg_avail = stg_rcnt;
         assign ring_out_full = out_full; assign ring_out_wr_count = out_wcnt;
         assign ring_rst_req = rst_req_ui;
@@ -169,7 +169,7 @@ module mic_subsystem #(
         reg rdy;
         always @(posedge ok_clk) rdy <= (out_rcnt >= BLOCK_WORDS);
         assign btpo_ep_ready_audio = rdy;
-        assign wo23_ep_datain_mic_level = {18'd0, out_rcnt};
+        assign wo23_ep_datain_mic_level = {16'd0, out_rcnt};
 
         // ---- un paquet n'est ecrit que s'il y a de la place dans l'anneau ET dans le FIFO d'entree ----
         (* ASYNC_REG = "TRUE" *) reg [1:0] sp;

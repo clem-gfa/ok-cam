@@ -18,7 +18,7 @@ module tb_mic_subsystem_ddr;
     wire [31:0] ring;
     // liaison mic_subsystem <-> audio_ddr_ring (instances separees, comme dans le block design)
     wire [127:0] r_stg_dout, r_out_din; wire r_stg_empty, r_stg_rd_en, r_out_wr_en, r_out_full, r_rst_req, r_idle, r_space_ok;
-    wire [9:0] r_stg_avail; wire [11:0] r_out_wcnt; wire [15:0] r_used, r_peak, r_axierr;
+    wire [9:0] r_stg_avail; wire [13:0] r_out_wcnt; wire [15:0] r_used, r_peak, r_axierr;
     audio_ddr_ring #(.RING_BASE(32'hA0000000), .RING_AW(4)) ringm (
         .clk(uclk), .aresetn(uaresetn), .rst_req(r_rst_req),
         .stg_dout(r_stg_dout), .stg_empty(r_stg_empty), .stg_avail(r_stg_avail), .stg_rd_en(r_stg_rd_en),

@@ -19,8 +19,8 @@ module audio_ddr_ring #(
     parameter [31:0] RING_BASE  = 32'hA0000000,
     parameter        RING_AW    = 14,            // 2^14 paquets x 4 Kio = 64 Mio
     parameter        STG_CNT_W  = 10,            // largeur de stg_avail (beats lisibles du FIFO d'entree)
-    parameter        OUT_CNT_W  = 12,            // largeur de out_wr_count (beats du FIFO de sortie)
-    parameter        OUT_DEPTH  = 2048           // profondeur du FIFO de sortie en beats
+    parameter        OUT_CNT_W  = 14,            // largeur de out_wr_count (beats du FIFO de sortie)
+    parameter        OUT_DEPTH  = 8192           // profondeur du FIFO de sortie en beats
 ) (
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF m_axi, ASSOCIATED_RESET aresetn" *)
