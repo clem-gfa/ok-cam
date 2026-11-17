@@ -162,12 +162,14 @@ int main() {
         fs::remove_all(dir);
     }
 
-    // ---- ffmpeg missing: falls back to raw ---------------------------------------------------------------------------------------------------
+    // ---- ffmpeg missing: refused (no silent 190 MB/s raw file); raw only when explicitly requested ---------------------------------------------------------------------------------------------------
     {
         const fs::path dir = tmpDir("nofm");
         VideoRecorder rec;
         VideoRecorderOptions opt; opt.ffmpegPath = "/nonexistent/ffmpeg";
         std::string why;
+        assert(!rec.start(dir.string(), "okcam_n", opt, why) && why.find("ffmpeg not found") == 0 && !rec.recording());
+        opt.codec = "raw";
         assert(rec.start(dir.string(), "okcam_n", opt, why));
         assert(rec.codec() == "raw");
         assert(rec.writeFrame(makeFrame(16, 16, 0).data(), 16, 16, VideoSync()));

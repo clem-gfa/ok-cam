@@ -1205,9 +1205,24 @@ private:
             cfg.Write("rec/dir", m_recDir);
         }
         okcli::VideoRecorderOptions opt;
+        {   // ffmpeg chosen earlier by the user (saved), else PATH / usual install folders
+            wxConfig cfg("okcam-gui");
+            opt.ffmpegPath = cfg.Read("rec/ffmpeg", "").ToStdString(wxConvUTF8);
+        }
         if (const char* c = std::getenv("OKCAM_VIDEO_CODEC")) opt.codec = c;     // auto | h264 | mjpeg | ffv1 | raw
         std::string why;
-        if (!m_worker->Video().start(m_recSettings->dir, session, opt, why) ||
+        bool started = m_worker->Video().start(m_recSettings->dir, session, opt, why);
+        if (!started && why.rfind("ffmpeg not found", 0) == 0) {
+            // Let the user point at ffmpeg once; remembered for next time
+            wxMessageBox(wxString::FromUTF8(why) + "\n\nSelect ffmpeg(.exe) now?", "Video encoder missing", wxOK | wxICON_WARNING, this);
+            wxFileDialog fd(this, "Locate ffmpeg", "", "", "ffmpeg|ffmpeg*|All files|*", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+            if (fd.ShowModal() == wxID_OK) {
+                opt.ffmpegPath = fd.GetPath().ToStdString(wxConvUTF8);
+                started = m_worker->Video().start(m_recSettings->dir, session, opt, why);
+                if (started) { wxConfig cfg("okcam-gui"); cfg.Write("rec/ffmpeg", fd.GetPath()); }
+            }
+        }
+        if (!started ||
             !okcli::videoDiskSpaceOk(m_recSettings->dir, m_worker->Video().codec(), why)) {
             m_worker->Video().stop();
             m_recVideoBtn->SetValue(false);

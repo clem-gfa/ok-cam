@@ -118,6 +118,24 @@ inline int closePipe(FILE* f) {
 #endif
 }
 
+// ffmpeg executable: "ffmpeg" (PATH) unless a usual Windows install location has one
+inline std::string findFfmpeg() {
+#ifdef _WIN32
+    std::vector<std::string> cands;
+    for (const char* v : {"LOCALAPPDATA", "ProgramFiles", "ProgramData", "USERPROFILE"})
+        if (const char* e = std::getenv(v)) {
+            const std::string b = e;
+            if (std::string(v) == "LOCALAPPDATA") cands.push_back(b + "\\Microsoft\\WinGet\\Links\\ffmpeg.exe");
+            if (std::string(v) == "ProgramFiles") cands.push_back(b + "\\ffmpeg\\bin\\ffmpeg.exe");
+            if (std::string(v) == "ProgramData") cands.push_back(b + "\\chocolatey\\bin\\ffmpeg.exe");
+            if (std::string(v) == "USERPROFILE") cands.push_back(b + "\\scoop\\shims\\ffmpeg.exe");
+        }
+    cands.push_back("C:\\ffmpeg\\bin\\ffmpeg.exe");
+    for (const auto& c : cands) { std::error_code ec; if (std::filesystem::exists(c, ec)) return c; }
+#endif
+    return "ffmpeg";
+}
+
 // "h264" / "mjpeg" / "ffv1" encoders ffmpeg offers ("" if ffmpeg cannot be run)
 inline std::string ffmpegEncoders(const std::string& ffmpeg) {
     FILE* p = openPipe(quote(ffmpeg) + " -hide_banner -encoders 2>&1", "r");
@@ -256,13 +274,23 @@ public:
         if (!std::filesystem::is_directory(dir)) { why = "cannot use the folder " + dir; return false; }
         if (options.ffmpegPath.empty()) {
             const char* env = std::getenv("OKCAM_FFMPEG");
-            options.ffmpegPath = (env && *env) ? env : "ffmpeg";
+            options.ffmpegPath = (env && *env) ? env : video_detail::findFfmpeg();
         }
         const bool customSink = static_cast<bool>(options.sinkFactory);
         std::string encoders;
         if (!customSink) {
             options.sinkFactory = video_detail::defaultSink;
-            if (options.codec != "raw") encoders = video_detail::ffmpegEncoders(options.ffmpegPath);
+            if (options.codec != "raw") {
+                encoders = video_detail::ffmpegEncoders(options.ffmpegPath);
+                // No silent fallback to raw RGB (~190 MB/s at 1080p30): if the user did not ask for "raw", refuse instead.
+                if (video_detail::resolveCodec(options.codec, encoders) == "raw") {
+                    why = encoders.empty()
+                        ? "ffmpeg not found (looked for \"" + options.ffmpegPath + "\"). Install it, add it to the PATH, or locate it "
+                          "(set OKCAM_FFMPEG); OKCAM_VIDEO_CODEC=raw records uncompressed video."
+                        : "this ffmpeg has no usable '" + options.codec + "' encoder (libx264/mjpeg/ffv1); OKCAM_VIDEO_CODEC=raw records uncompressed video.";
+                    return false;
+                }
+            }
         }
         {
             std::lock_guard<std::mutex> l(m_mx);
