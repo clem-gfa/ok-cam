@@ -11,6 +11,7 @@ module mic_subsystem #(
     parameter STD_PERIODS    = 48000,
     parameter SETTLE_PERIODS = 48000,
     parameter INVERT_CLK     = 0,
+    parameter FIFO_AW        = 15,     // profondeur du FIFO audio = 2^FIFO_AW mots de 32 bits (15 -> 128 Kio, ~3,6 ms) ; doit valoir celle de l'IP fifo_audio_pkt
     parameter BLOCK_WORDS    = 256     // taille de bloc de la pipe (mots 32 bits) : doit valoir le bloc utilise par le PC (1024 octets = 256)
 ) (
     input  wire        clk,
@@ -68,9 +69,11 @@ module mic_subsystem #(
 
     // ---- paquets -> FIFO ----------------------------------------------------------------------
     wire [31:0] tdata; wire tvalid, tlast, tready;
-    wire [14:0] wr_cnt, rd_cnt;
+    wire [FIFO_AW-1:0] wr_cnt, rd_cnt;
     wire        full, empty;
-    wire space_ok = (15'd32767 - wr_cnt) >= 15'd1024;      // FIFO de 32767 mots utiles (128 Kio, ~3,6 ms de flux)
+    localparam [FIFO_AW:0] FIFO_MAX = (1 << FIFO_AW) - 1;       // mots utiles du FIFO
+    wire [FIFO_AW:0] fifo_free = FIFO_MAX - wr_cnt;
+    wire space_ok = fifo_free >= 1024;
     wire [31:0] overruns, dropped;
     audio_packetizer #(.CH(64), .W(24), .NS(21)) u_pkt (
         .clk(clk), .rst(rst), .run(run), .in(fir), .in_valid(fir_v), .ts(ts), .vts(vts), .vcnt(vcnt),
@@ -89,7 +92,7 @@ module mic_subsystem #(
     reg rdy;
     always @(posedge ok_clk) rdy <= (rd_cnt >= BLOCK_WORDS);
     assign btpo_ep_ready_audio = rdy;
-    assign wo23_ep_datain_mic_level = {17'd0, rd_cnt};
+    assign wo23_ep_datain_mic_level = {{(32 - FIFO_AW){1'b0}}, rd_cnt};
 
     // ---- statut (clk -> okClk) ---------------------------------------------------------------
     reg full_seen;

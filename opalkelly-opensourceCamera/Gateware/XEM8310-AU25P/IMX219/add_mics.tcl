@@ -18,6 +18,11 @@
 
 set mic_rtl ../Microphones/rtl
 
+# Profondeur du FIFO audio = 2^mic_fifo_aw mots de 32 bits. 15 (defaut) = 128 Kio = ~3,6 ms de flux audio ;
+# 16 = 256 Kio (~7 ms), 17 = 512 Kio (~14 ms). Plus c'est profond, plus l'appli PC peut etre lente (un FIFO qui
+# deborde fait perdre des paquets entiers) mais plus ca consomme de BRAM : verifier l'utilisation apres synthese.
+if {![info exists mic_fifo_aw]} { set mic_fifo_aw 15 }
+
 # --- sources -------------------------------------------------------------------------------
 add_files -norecurse [list \
     $mic_rtl/mic_clkgen.v $mic_rtl/pdm_capture.v $mic_rtl/cic_bank.v $mic_rtl/fir_bank.v \
@@ -26,20 +31,20 @@ set_property file_type {Verilog Header} [get_files fir_coeffs.vh]
 set_property is_global_include true [get_files fir_coeffs.vh]
 set_property include_dirs [list [file normalize $mic_rtl]] [current_fileset]
 
-# FIFO audio : horloges independantes (ecriture = horloge micros, lecture = okClk), 32768 x 32 (128 Kio), non FWFT.
+# FIFO audio : horloges independantes (ecriture = horloge micros, lecture = okClk), 2^mic_fifo_aw x 32, non FWFT.
 # Profond a dessein : l'appli lit la video par tranches et ne lit l'audio qu'entre deux tranches.
 create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_audio_pkt
 set_property -dict [list \
   CONFIG.Fifo_Implementation {Independent_Clocks_Block_RAM} \
   CONFIG.Input_Data_Width {32} \
-  CONFIG.Input_Depth {32768} \
+  CONFIG.Input_Depth [expr {1 << $mic_fifo_aw}] \
   CONFIG.Output_Data_Width {32} \
   CONFIG.Reset_Pin {true} \
   CONFIG.Use_Embedded_Registers {false} \
   CONFIG.Read_Data_Count {true} \
   CONFIG.Write_Data_Count {true} \
-  CONFIG.Read_Data_Count_Width {15} \
-  CONFIG.Write_Data_Count_Width {15} \
+  CONFIG.Read_Data_Count_Width $mic_fifo_aw \
+  CONFIG.Write_Data_Count_Width $mic_fifo_aw \
 ] [get_ips fifo_audio_pkt]
 
 add_files -fileset constrs_1 -norecurse [list ../Microphones/mic_pins.xdc ../Microphones/mic_timing.xdc]
@@ -66,6 +71,7 @@ set block_name mic_subsystem
 if { [catch {set mic_subsystem_0 [create_bd_cell -type module -reference $block_name mic_subsystem_0] } errmsg] } {
    error "Unable to add referenced block mic_subsystem: $errmsg"
 }
+set_property CONFIG.FIFO_AW $mic_fifo_aw [get_bd_cells mic_subsystem_0]
 
 # Debut de trame video : detecteur en observateur (interface AXI-Stream « monitor ») sur le flux qui entre
 # dans le VDMA (v_tpg_0 -> axi_vdma_0/S_AXIS_S2MM). Si le branchement de l'observateur echoue dans votre

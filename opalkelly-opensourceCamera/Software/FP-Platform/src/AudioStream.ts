@@ -115,6 +115,8 @@ export interface AudioStats {
     lastSeq: number;
     recordedFrames: number; // frames written to the current recording (silence included)
     segments: number; // closed segments of the current recording
+    maxGapMs: number; // longest time between two pump() calls (host stalls; the gateware FIFO holds ~3.6 ms)
+    longGaps: number; // number of gaps longer than 3 ms
 }
 
 export interface AudioRecorderOptions {
@@ -161,6 +163,7 @@ export class AudioRecorder {
     private readonly _onSegmentClosed?: (wavName: string, csvName: string) => Promise<void>;
 
     private _expectSeq = false;
+    private _lastPump = 0;
     private _nextSeq = 0;
     private _rec: Recording | null = null;
     private _stats: AudioStats = AudioRecorder.emptyStats();
@@ -186,7 +189,7 @@ export class AudioRecorder {
     }
 
     private static emptyStats(): AudioStats {
-        return { packets: 0, lostPackets: 0, badBlocks: 0, frames: 0, lastSeq: 0, recordedFrames: 0, segments: 0 };
+        return { packets: 0, lostPackets: 0, badBlocks: 0, frames: 0, lastSeq: 0, recordedFrames: 0, segments: 0, maxGapMs: 0, longGaps: 0 };
     }
 
     get sampleRate(): number {
@@ -208,6 +211,13 @@ export class AudioRecorder {
      * Must be called on the device queue (see `runOnDevice`).
      */
     async pump(): Promise<number> {
+        const now = performance.now();
+        if (this._lastPump > 0) {
+            const gap = now - this._lastPump;
+            if (gap > this._stats.maxGapMs) this._stats.maxGapMs = gap;
+            if (gap > 3) this._stats.longGaps++;
+        }
+        this._lastPump = now;
         const words = await this._pipe.available();
         let packets = Math.floor(words / (AUDIO_PACKET_BYTES / 4));
         if (packets > this._maxPackets) packets = this._maxPackets;
@@ -227,6 +237,9 @@ export class AudioRecorder {
         this._stopRequested = false;
         this._error = null;
         this._expectSeq = false;
+        this._lastPump = 0;
+        this._stats.maxGapMs = 0;
+        this._stats.longGaps = 0;
         void (async () => {
             try {
                 while (!this._stopRequested) {

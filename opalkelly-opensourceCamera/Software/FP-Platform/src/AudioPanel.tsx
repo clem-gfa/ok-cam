@@ -17,9 +17,6 @@ import { AUDIO_CHANNELS, AUDIO_PEAK_BLOCK, AudioRecorder, AudioStats } from "./A
 import { AudioPipeOverClassicDataPort, MIC_STATUS_RUN, MicCounters, micCounters, micPresent, micSetEnabled, micStatus } from "./AudioPipe";
 import { OpfsExporter, opfsSinkFactory } from "./OpfsStorage";
 
-const COLS = 8;
-const CELL_W = 80;
-const CELL_H = 56;
 const FULL_SCALE = 8388608; // 2^23
 
 interface AudioPanelProps {
@@ -40,10 +37,14 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
     const [stats, setStats] = React.useState<AudioStats | null>(null);
     const [fpga, setFpga] = React.useState<MicCounters | null>(null);
     const [message, setMessage] = React.useState("");
+    const [layout, setLayout] = React.useState<"8x8" | "16x4">("8x8");
+    const [maximized, setMaximized] = React.useState(false);
+    const [size, setSize] = React.useState({ w: 640, h: 448 }); // drawing area (CSS pixels)
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
+    const areaRef = React.useRef<HTMLDivElement>(null);
     const recorderRef = React.useRef<AudioRecorder | null>(null);
-    const settingsRef = React.useRef({ windowMs: 20, gain: 8 });
-    settingsRef.current = { windowMs, gain };
+    const settingsRef = React.useRef({ windowMs: 20, gain: 8, layout: "8x8", w: 640, h: 448 });
+    settingsRef.current = { windowMs, gain, layout, w: size.w, h: size.h };
 
     const getRecorder = React.useCallback((): AudioRecorder => {
         if (!recorderRef.current) {
@@ -125,6 +126,18 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
         }
     };
 
+    // The drawing area follows the panel size (drag the bottom-right corner, or use Maximize)
+    React.useEffect(() => {
+        const el = areaRef.current;
+        if (!el || !open || typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver((entries) => {
+            const r = entries[0].contentRect;
+            if (r.width > 100 && r.height > 100) setSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
+        });
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [open, present, maximized]);
+
     // Release the hardware when the panel goes away
     React.useEffect(() => {
         return () => {
@@ -152,15 +165,25 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
             if (!canvas || !rec) return;
             const ctx = canvas.getContext("2d");
             if (!ctx) return;
-            const { windowMs: wms, gain: g } = settingsRef.current;
+            const { windowMs: wms, gain: g, layout: lay, w: cw, h: chh } = settingsRef.current;
+            const cols = lay === "16x4" ? 16 : 8;
+            const rows = AUDIO_CHANNELS / cols;
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(chh * dpr)) {
+                canvas.width = Math.round(cw * dpr);
+                canvas.height = Math.round(chh * dpr);
+            }
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const CELL_W = cw / cols;
+            const CELL_H = chh / rows;
             const blocks = Math.min(bufMin.length, Math.max(1, Math.round(((wms / 1000) * rec.sampleRate) / AUDIO_PEAK_BLOCK)));
             ctx.fillStyle = "#101418";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, cw, chh);
             const k = ((CELL_H / 2 - 2) * g) / FULL_SCALE;
-            const cols = CELL_W - 2;
+            const pxCols = Math.max(8, Math.floor(CELL_W) - 2);
             for (let ch = 0; ch < AUDIO_CHANNELS; ch++) {
-                const x0 = (ch % COLS) * CELL_W;
-                const y0 = Math.floor(ch / COLS) * CELL_H;
+                const x0 = (ch % cols) * CELL_W;
+                const y0 = Math.floor(ch / cols) * CELL_H;
                 const mid = y0 + CELL_H / 2;
                 ctx.strokeStyle = "#2a323a";
                 ctx.strokeRect(x0 + 0.5, y0 + 0.5, CELL_W - 1, CELL_H - 1);
@@ -168,9 +191,9 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                 if (n === 0) continue;
                 ctx.strokeStyle = "#5ad1a0";
                 ctx.beginPath();
-                for (let px = 0; px < cols; px++) {
-                    const i0 = Math.floor((px * n) / cols);
-                    const i1 = Math.max(i0 + 1, Math.floor(((px + 1) * n) / cols));
+                for (let px = 0; px < pxCols; px++) {
+                    const i0 = Math.floor((px * n) / pxCols);
+                    const i1 = Math.max(i0 + 1, Math.floor(((px + 1) * n) / pxCols));
                     let mn = bufMin[i0];
                     let mx = bufMax[i0];
                     for (let i = i0 + 1; i < i1 && i < n; i++) {
@@ -210,18 +233,26 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                 <div
                     style={{
                         position: "fixed",
-                        top: 48,
-                        right: 8,
                         zIndex: 100,
                         background: "rgba(16,20,24,0.94)",
                         color: "#ddd",
                         font: "12px monospace",
                         padding: 8,
-                        width: COLS * CELL_W + 16,
+                        boxSizing: "border-box",
+                        display: "flex",
+                        flexDirection: "column",
+                        overflow: "hidden",
+                        // drag the bottom-right corner to resize, or use Maximize
+                        ...(maximized
+                            ? { left: 8, top: 48, right: 8, bottom: 52 }
+                            : { left: 8, top: 48, width: 676, height: 580, resize: "both", minWidth: 420, minHeight: 320 }),
                     }}
                 >
                     <div style={{ marginBottom: 6 }}>
                         <b>Microphones (64 channels)</b>
+                        <button style={{ float: "right" }} onClick={() => setMaximized(!maximized)}>
+                            {maximized ? "Restore" : "Maximize"}
+                        </button>
                     </div>
                     {present === false && (
                         <div>The loaded bitfile has no microphone subsystem (build the gateware with <code>set with_mics 1</code>).</div>
@@ -254,12 +285,21 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                                     <option value={8}>x8</option>
                                     <option value={64}>x64</option>
                                     <option value={512}>x512</option>
+                                </select>{" "}
+                                Layout{" "}
+                                <select value={layout} onChange={(e) => setLayout(e.target.value as "8x8" | "16x4")}>
+                                    <option value="8x8">8 x 8</option>
+                                    <option value="16x4">16 x 4</option>
                                 </select>
                             </div>
-                            <canvas ref={canvasRef} width={COLS * CELL_W} height={(AUDIO_CHANNELS / COLS) * CELL_H} />
+                            <div ref={areaRef} style={{ position: "relative", flex: 1, minHeight: 0 }}>
+                                <canvas ref={canvasRef} style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%" }} />
+                            </div>
                             {stats && (
                                 <div style={{ marginTop: 4 }}>
-                                    packets {stats.packets} | lost {stats.lostPackets} | bad {stats.badBlocks}
+                                    packets {stats.packets} | lost {stats.lostPackets} (
+                                    {((100 * stats.lostPackets) / Math.max(1, stats.packets + stats.lostPackets)).toFixed(1)}%) | bad {stats.badBlocks} |
+                                    host gap max {stats.maxGapMs.toFixed(1)} ms, {stats.longGaps} over 3 ms
                                     {recording || stats.segments > 0
                                         ? ` | rec ${(stats.recordedFrames / (recorderRef.current?.sampleRate ?? 1)).toFixed(1)} s, ${stats.segments} segment(s) exported`
                                         : ""}
@@ -267,7 +307,7 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                             )}
                             {fpga && (
                                 <div style={{ marginTop: 2, color: "#9aa5b1" }}>
-                                    FPGA: dropped {fpga.dropped} | overruns {fpga.overruns} | FIFO {Math.round((fpga.level / 32768) * 100)}% |
+                                    FPGA: dropped {fpga.dropped} | overruns {fpga.overruns} | FIFO {((fpga.level * 4) / 1024).toFixed(0)} KB |
                                     {(fpga.status & 0x8) !== 0 ? " FIFO was full" : " FIFO never full"}
                                 </div>
                             )}
