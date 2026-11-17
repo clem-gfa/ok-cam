@@ -284,7 +284,7 @@ public:
                 encoders = video_detail::ffmpegEncoders(options.ffmpegPath);
                 // No silent fallback to raw RGB (~190 MB/s at 1080p30): if the user did not ask for "raw", refuse instead.
                 if (video_detail::resolveCodec(options.codec, encoders) == "raw") {
-                    why = encoders.empty()
+                    why = encoders.find("Encoders:") == std::string::npos      // the shell's "not found" message, not ffmpeg's list
                         ? "ffmpeg not found (looked for \"" + options.ffmpegPath + "\"). Install it, add it to the PATH, or locate it "
                           "(set OKCAM_FFMPEG); OKCAM_VIDEO_CODEC=raw records uncompressed video."
                         : "this ffmpeg has no usable '" + options.codec + "' encoder (libx264/mjpeg/ffv1); OKCAM_VIDEO_CODEC=raw records uncompressed video.";
