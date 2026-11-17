@@ -221,6 +221,57 @@ async function main() {
         assert.ok(behindRec.stats.skippedPackets > 0, "large ring backlog: packets skipped");
     }
 
+
+    // recording is batched (one write per MiB, not per packet) and never waits for the disk
+    {
+        let writes = 0;
+        class CountingSink extends FileSink {
+            async write(data: Uint8Array) {
+                writes++;
+                return super.write(data);
+            }
+        }
+        const pb = new FakePipe();
+        const NPK = 600;
+        for (let q = 0; q < NPK; q++) pb.queue.push(makePacket(q, 0, false));
+        const rb = new AudioRecorder(pb, { ringFrames: 2000, keepRaw: false, segmentSeconds: 600 });
+        const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "okaudio-b-"));
+        rb.startRecording("okcam_batch", async (name) => new CountingSink(path.join(dir2, name)));
+        while ((await rb.pump()) > 0) {
+            /* drain */
+        }
+        await rb.stopRecording();
+        assert.ok(writes < NPK / 20, `batched writes expected, got ${writes} writes for ${NPK} packets`);
+        const f0 = fs.readFileSync(path.join(dir2, "okcam_batch_000.wav"));
+        assert.strictEqual(f0.length, 104 + NPK * 21 * AUDIO_FRAME_BYTES);
+        fs.rmSync(dir2, { recursive: true, force: true });
+    }
+
+    // a failing disk / exceeded quota stops the recording, never the acquisition, and nothing throws out of pump()
+    {
+        class QuotaSink extends FileSink {
+            private _n = 0;
+            async write(data: Uint8Array) {
+                if (++this._n > 2) throw new Error("The operation failed because it would cause the application to exceed its storage quota.");
+                return super.write(data);
+            }
+        }
+        const pq = new FakePipe();
+        for (let q = 0; q < 800; q++) pq.queue.push(makePacket(q, 0, false));
+        const rq = new AudioRecorder(pq, { ringFrames: 2000, keepRaw: false, segmentSeconds: 600 });
+        const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), "okaudio-q-"));
+        rq.startRecording("okcam_quota", async (name) => new QuotaSink(path.join(dir3, name)));
+        while ((await rq.pump()) > 0) {
+            /* drain */
+        }
+        assert.strictEqual(rq.stats.packets, 800, "the acquisition continued");
+        await new Promise((r) => setTimeout(r, 20));
+        assert.ok(rq.recordError && rq.recordError.includes("storage quota"), `recordError: ${rq.recordError}`);
+        assert.strictEqual(rq.recording, false);
+        await rq.stopRecording(); // must not throw
+        fs.rmSync(dir3, { recursive: true, force: true });
+    }
+
     // independent reader: ffprobe if installed
     try {
         const out = execFileSync(

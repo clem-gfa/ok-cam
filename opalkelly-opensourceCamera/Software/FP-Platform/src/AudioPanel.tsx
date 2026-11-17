@@ -15,9 +15,13 @@ import { IFPGADataPortClassic, WorkQueue } from "@opalkelly/frontpanel-platform-
 import { AxiStreamOverClassicDataPort } from "./AxiOverClassicDataPort";
 import { AUDIO_CHANNELS, AUDIO_PEAK_BLOCK, AudioRecorder, AudioStats } from "./AudioStream";
 import { AudioPipeOverClassicDataPort, MIC_STATUS_RUN, MicCounters, micCounters, micPresent, micSetEnabled, micStatus } from "./AudioPipe";
-import { OpfsExporter, opfsSinkFactory } from "./OpfsStorage";
+import { OpfsExporter, opfsSinkFactory, purgeOpfs, storageInfo } from "./OpfsStorage";
 
 const FULL_SCALE = 8388608; // 2^23
+// A recording is cut into files of this duration (~36 MB/s: 20 s = ~730 MB). The OPFS quota is a few GB and a finished
+// segment stays there until it has been handed to the user, so small segments keep the footprint low.
+const SEGMENT_SECONDS = 20;
+const AUDIO_BYTES_PER_SECOND = 36.3e6;
 
 interface AudioPanelProps {
     dataPort: IFPGADataPortClassic;
@@ -52,6 +56,7 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue, vi
             const exporter = new OpfsExporter();
             recorderRef.current = new AudioRecorder(new AudioPipeOverClassicDataPort(dataPort), {
                 keepRaw: false, // the display uses the per-block peaks only
+                segmentSeconds: SEGMENT_SECONDS,
                 catchUp: true, // behind and not recording: show the newest audio instead of a growing delay
                 runOnDevice: (task) => workQueue.post(task),
                 onSegmentClosed: async (wav, csv) => {
@@ -106,10 +111,8 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue, vi
         const rec = getRecorder();
         stream.setBetweenChunksHook(null);
         await rec.stop();
-        if (rec.recording) {
-            await rec.stopRecording();
-            setRecording(false);
-        }
+        await rec.stopRecording(); // also releases the files of a recording that failed
+        setRecording(false);
         await workQueue.post(async () => micSetEnabled(dataPort, false)).catch(() => undefined);
         setRunning(false);
         setMessage(rec.error ? `stopped: ${rec.error}` : "");
@@ -120,12 +123,29 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue, vi
         if (rec.recording) {
             await rec.stopRecording();
             setRecording(false);
-        } else {
+            return;
+        }
+        try {
+            // Files left by earlier runs count against the storage quota: clear them, then check there is room for a
+            // segment being written plus the previous one still waiting to be handed over.
+            await purgeOpfs();
+            const info = await storageInfo();
+            const need = 3 * SEGMENT_SECONDS * AUDIO_BYTES_PER_SECOND;
+            if (info && info.quotaBytes - info.usageBytes < need) {
+                setMessage(
+                    `Not enough storage for a recording: ${((info.quotaBytes - info.usageBytes) / 1e9).toFixed(1)} GB free, ` +
+                        `${(need / 1e9).toFixed(1)} GB needed (quota ${(info.quotaBytes / 1e9).toFixed(1)} GB)`
+                );
+                return;
+            }
             const d = new Date();
             const pad = (n: number) => String(n).padStart(2, "0");
             const session = `okcam_audio_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
             rec.startRecording(session, opfsSinkFactory);
             setRecording(true);
+            setMessage("");
+        } catch (e) {
+            setMessage(e instanceof Error ? e.message : String(e));
         }
     };
 
@@ -214,6 +234,10 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue, vi
                 ctx.fillText(String(ch + 1), x0 + 3, y0 + 10);
             }
             setStats(rec.stats);
+            if (rec.recordError) {
+                setMessage(`Recording stopped: ${rec.recordError}`);
+                setRecording(false);
+            }
             if (now - lastFpga > 1000) {
                 lastFpga = now;
                 void workQueue.post(async () => setFpga(await micCounters(dataPort))).catch(() => undefined);

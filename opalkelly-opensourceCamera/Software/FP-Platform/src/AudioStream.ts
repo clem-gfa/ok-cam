@@ -23,6 +23,10 @@ export const AUDIO_PIPE_ADDRESS = 0xa1;
 export const AUDIO_BLOCK_SIZE = 1024; // must equal BLOCK_WORDS * 4 in the gateware (256 words)
 export const AUDIO_TICKS_PER_FRAME = 528; // 22 clk per PDM period x 24 (decimation)
 export const AUDIO_TICK_HZ = 99.96e6;
+/** Recording writes in chunks of this size (one write per MiB, not one per 4 KiB packet) and never waits for the disk. */
+export const AUDIO_REC_CHUNK_BYTES = 1 << 20;
+/** More than this waiting for the disk and the recording is stopped (the live display and the acquisition go on). */
+export const AUDIO_REC_MAX_QUEUED_BYTES = 64 << 20;
 export const AUDIO_CATCHUP_RING_PACKETS = 200; // ~22 ms of backlog in the DDR4 ring: the live display skips ahead
 export const AUDIO_PEAK_BLOCK = 8; // frames per min/max block kept for the display
 
@@ -146,14 +150,25 @@ export interface AudioRecorderOptions {
     onSegmentClosed?: (wavName: string, csvName: string) => Promise<void>;
 }
 
+/** One output file (WAV + CSV) being written. */
+interface Segment {
+    wavName: string;
+    sink: AudioFileSink;
+    writing: Promise<void>; // chain of the pending chunk writes (never awaited by the acquisition)
+    queuedBytes: number;
+    chunk: Uint8Array;
+    chunkLen: number;
+    frames: number;
+    csv: string[];
+}
+
 interface Recording {
     session: string;
     factory: AudioSinkFactory;
     segment: number;
-    wavName: string;
-    sink: AudioFileSink | null;
-    frames: number;
-    csv: string[];
+    current: Segment | null;
+    finalizing: Promise<void>[]; // closed segments being finalised in the background
+    failed: string | null;
 }
 
 export class AudioRecorder {
@@ -190,6 +205,7 @@ export class AudioRecorder {
     private _loopRunning = false;
     private _stopRequested = false;
     private _error: string | null = null;
+    private _recordError: string | null = null;
 
     constructor(pipe: IAudioPipe, options: AudioRecorderOptions = {}) {
         this._pipe = pipe;
@@ -223,7 +239,11 @@ export class AudioRecorder {
         return this._error;
     }
     get recording(): boolean {
-        return this._rec !== null;
+        return this._rec !== null && this._rec.failed === null;
+    }
+    /** Why the recording stopped by itself (storage quota, disk too slow...), null otherwise. */
+    get recordError(): string | null {
+        return this._recordError;
     }
 
     /**
@@ -305,16 +325,24 @@ export class AudioRecorder {
 
     /** Starts writing segments named `<session>_<n>.wav` / `.csv` through `factory`. */
     startRecording(session: string, factory: AudioSinkFactory): void {
-        this._rec = { session, factory, segment: 0, wavName: "", sink: null, frames: 0, csv: [] };
+        // a previous recording that failed was never finalised: release its file
+        void this._rec?.current?.sink.close().catch(() => undefined);
+        this._rec = { session, factory, segment: 0, current: null, finalizing: [], failed: null };
+        this._recordError = null;
         this._stats.recordedFrames = 0;
         this._stats.segments = 0;
     }
 
-    /** Closes the current segment and stops recording. */
+    /** Closes the current segment (waits for pending writes) and stops recording. */
     async stopRecording(): Promise<void> {
-        if (!this._rec) return;
-        await this.closeSegment();
-        this._rec = null;
+        const rec = this._rec;
+        if (!rec) return;
+        this._rec = null; // no more packets are appended
+        if (rec.current) {
+            rec.finalizing.push(this.finalizeSegment(rec, rec.current));
+            rec.current = null;
+        }
+        await Promise.all(rec.finalizing);
     }
 
     /** The last up-to-`maxFrames` samples of one channel (24-bit, sign-extended), oldest first. */
@@ -433,48 +461,113 @@ export class AudioRecorder {
     }
 
     private async record(h: AudioPacketInfo, lostFrames: number): Promise<void> {
-        const rec = this._rec!;
-        if (!rec.sink) {
-            rec.wavName = `${rec.session}_${String(rec.segment).padStart(3, "0")}.wav`;
-            rec.sink = await rec.factory(rec.wavName);
-            await rec.sink.write(buildWavHeader(0, this._sampleRate));
-            rec.frames = 0;
-            rec.csv = ["seq,ts,first_frame,video_frames,video_ts,lost_before"];
-        }
-        if (lostFrames > 0) {
-            // keep the file position proportional to time: silence in place of the lost packets
-            const zeros = new Uint8Array(AUDIO_FRAME_BYTES * 1024);
-            let left = lostFrames;
-            while (left > 0) {
-                const n = Math.min(left, 1024);
-                await rec.sink.write(zeros.subarray(0, n * AUDIO_FRAME_BYTES));
-                left -= n;
+        const rec = this._rec;
+        if (!rec || rec.failed) return;
+        try {
+            if (!rec.current) rec.current = await this.openSegment(rec);
+            const seg = rec.current;
+            if (lostFrames > 0) {
+                // keep the file position proportional to time: silence in place of the lost packets
+                const zeros = new Uint8Array(AUDIO_FRAME_BYTES * 1024);
+                let left = lostFrames;
+                while (left > 0) {
+                    const n = Math.min(left, 1024);
+                    this.append(rec, seg, zeros.subarray(0, n * AUDIO_FRAME_BYTES));
+                    left -= n;
+                }
+                seg.frames += lostFrames;
+                this._stats.recordedFrames += lostFrames;
             }
-            rec.frames += lostFrames;
-            this._stats.recordedFrames += lostFrames;
-        }
-        rec.csv.push(`${h.seq},${h.ts},${rec.frames},${h.videoFrames},${h.videoTs},${h.lostBefore ? 1 : 0}`);
-        await rec.sink.write(h.payload);
-        rec.frames += h.nsamp;
-        this._stats.recordedFrames += h.nsamp;
-        if (rec.frames >= this._segmentFrames) {
-            await this.closeSegment();
-            rec.segment++;
+            seg.csv.push(`${h.seq},${h.ts},${seg.frames},${h.videoFrames},${h.videoTs},${h.lostBefore ? 1 : 0}`);
+            this.append(rec, seg, h.payload);
+            seg.frames += h.nsamp;
+            this._stats.recordedFrames += h.nsamp;
+            if (!rec.failed && seg.frames >= this._segmentFrames) {
+                // Close in the background: the acquisition must not wait for the disk
+                rec.current = null;
+                rec.segment++;
+                rec.finalizing.push(this.finalizeSegment(rec, seg));
+            }
+        } catch (e) {
+            this.failRecording(rec, e);
         }
     }
 
-    private async closeSegment(): Promise<void> {
-        const rec = this._rec;
-        if (!rec || !rec.sink) return;
-        const sink = rec.sink;
-        rec.sink = null;
-        await sink.overwrite(0, buildWavHeader(rec.frames * AUDIO_FRAME_BYTES, this._sampleRate));
-        await sink.close();
-        const csvName = rec.wavName.replace(/\.wav$/, ".csv");
-        const csv = await rec.factory(csvName);
-        await csv.write(new TextEncoder().encode(rec.csv.join("\n") + "\n"));
-        await csv.close();
-        this._stats.segments++;
-        if (this._onSegmentClosed) await this._onSegmentClosed(rec.wavName, csvName);
+    private async openSegment(rec: Recording): Promise<Segment> {
+        const wavName = `${rec.session}_${String(rec.segment).padStart(3, "0")}.wav`;
+        const seg: Segment = {
+            wavName,
+            sink: await rec.factory(wavName),
+            writing: Promise.resolve(),
+            queuedBytes: 0,
+            chunk: new Uint8Array(AUDIO_REC_CHUNK_BYTES),
+            chunkLen: 0,
+            frames: 0,
+            csv: ["seq,ts,first_frame,video_frames,video_ts,lost_before"],
+        };
+        this.append(rec, seg, buildWavHeader(0, this._sampleRate)); // placeholder, rewritten at the end
+        return seg;
+    }
+
+    /** Copies bytes into the current chunk; a full chunk is written in the background (never awaited here). */
+    private append(rec: Recording, seg: Segment, data: Uint8Array): void {
+        let off = 0;
+        while (off < data.byteLength) {
+            const n = Math.min(data.byteLength - off, seg.chunk.byteLength - seg.chunkLen);
+            seg.chunk.set(data.subarray(off, off + n), seg.chunkLen);
+            seg.chunkLen += n;
+            off += n;
+            if (seg.chunkLen === seg.chunk.byteLength) this.flushChunk(rec, seg);
+        }
+    }
+
+    private flushChunk(rec: Recording, seg: Segment): void {
+        if (seg.chunkLen === 0) return;
+        const buf = seg.chunk.subarray(0, seg.chunkLen);
+        seg.chunk = new Uint8Array(AUDIO_REC_CHUNK_BYTES);
+        seg.chunkLen = 0;
+        seg.queuedBytes += buf.byteLength;
+        if (seg.queuedBytes > AUDIO_REC_MAX_QUEUED_BYTES) {
+            this.failRecording(rec, new Error("disk write queue overflow: the storage cannot keep up with the audio"));
+            return;
+        }
+        seg.writing = seg.writing.then(async () => {
+            if (rec.failed) return;
+            try {
+                await seg.sink.write(buf);
+            } catch (e) {
+                this.failRecording(rec, e);
+            } finally {
+                seg.queuedBytes -= buf.byteLength;
+            }
+        });
+    }
+
+    private failRecording(rec: Recording, e: unknown): void {
+        if (rec.failed) return;
+        rec.failed = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        this._recordError = rec.failed;
+    }
+
+    /** Writes the end of a segment (header sizes, CSV) and exports it. Never throws: errors stop the recording. */
+    private async finalizeSegment(rec: Recording, seg: Segment): Promise<void> {
+        try {
+            this.flushChunk(rec, seg);
+            await seg.writing;
+            if (rec.failed) {
+                await seg.sink.close().catch(() => undefined);
+                return;
+            }
+            await seg.sink.overwrite(0, buildWavHeader(seg.frames * AUDIO_FRAME_BYTES, this._sampleRate));
+            await seg.sink.close();
+            const csvName = seg.wavName.replace(/\.wav$/, ".csv");
+            const csv = await rec.factory(csvName);
+            await csv.write(new TextEncoder().encode(seg.csv.join("\n") + "\n"));
+            await csv.close();
+            this._stats.segments++;
+            if (this._onSegmentClosed) await this._onSegmentClosed(seg.wavName, csvName);
+        } catch (e) {
+            this.failRecording(rec, e);
+        }
     }
 }

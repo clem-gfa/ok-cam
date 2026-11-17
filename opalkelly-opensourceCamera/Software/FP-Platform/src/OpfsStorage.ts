@@ -45,7 +45,7 @@ export class OpfsExporter {
     private readonly _exported: string[] = [];
     private readonly _keep: number;
 
-    constructor(keepExportedFiles = 4) {
+    constructor(keepExportedFiles = 2) {
         this._keep = keepExportedFiles;
     }
 
@@ -67,4 +67,30 @@ export class OpfsExporter {
             await root.removeEntry(old).catch(() => undefined);
         }
     }
+}
+
+/** Removes the recordings (and test files) left in the OPFS by earlier runs, which count against the storage quota. */
+export async function purgeOpfs(prefix = "okcam_"): Promise<number> {
+    const root = await opfsRoot();
+    const names: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for await (const [name] of (root as any).entries() as AsyncIterable<[string, unknown]>) names.push(name);
+    let removed = 0;
+    for (const name of names) {
+        if (!name.startsWith(prefix)) continue;
+        await root.removeEntry(name).catch(() => undefined);
+        removed++;
+    }
+    return removed;
+}
+
+export interface StorageInfo {
+    usageBytes: number;
+    quotaBytes: number;
+}
+
+export async function storageInfo(): Promise<StorageInfo | null> {
+    const est = await navigator.storage?.estimate?.();
+    if (!est) return null;
+    return { usageBytes: est.usage ?? 0, quotaBytes: est.quota ?? 0 };
 }
