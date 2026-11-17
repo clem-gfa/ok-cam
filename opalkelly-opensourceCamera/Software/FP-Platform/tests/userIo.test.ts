@@ -2,7 +2,7 @@
 import * as assert from "assert";
 
 import { IAxiLite } from "../src/IAxi";
-import { BUTTON_RESET, BUTTON_USER, LED_0, LED_1, UserIoDriver } from "../src/UserIoDriver";
+import { BUTTON_RESET, BUTTON_USER, LED_0, LED_1, SimulatedUserIo, UserIoDriver } from "../src/UserIoDriver";
 
 class FakeAxi implements IAxiLite {
     present = true;
@@ -53,6 +53,19 @@ async function main() {
     // other errors are not mistaken for "absent"
     const broken: IAxiLite = { ...bus, read32: async () => { throw new Error("AXI-Lite read hardware timeout"); }, write32: async () => {}, resetSystem: async () => {} };
     await assert.rejects(() => new UserIoDriver(broken).isPresent());
+
+    // simulated backend (used by the UI when the bitfile has no user I/O block)
+    const sim = new SimulatedUserIo();
+    assert.strictEqual(await sim.leds(), 0);
+    await sim.setLed(LED_1, true);
+    assert.strictEqual(await sim.leds(), LED_1);
+    await sim.setLed(LED_1, false);
+    assert.strictEqual(await sim.leds(), 0);
+    sim.press(BUTTON_USER, true);
+    assert.strictEqual(await sim.buttonsPressed(), BUTTON_USER);
+    sim.press(BUTTON_RESET, true);
+    sim.press(BUTTON_USER, false);
+    assert.strictEqual(await sim.buttonsPressed(), BUTTON_RESET);
 
     console.log("ALL USER IO TESTS PASSED");
 }

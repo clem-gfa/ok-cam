@@ -24,7 +24,34 @@ export const BUTTON_RESET = 1 << 1;
 const LED_MASK = LED_0 | LED_1;
 const BUTTON_MASK = BUTTON_USER | BUTTON_RESET;
 
-export class UserIoDriver {
+/** What the UI needs from the user I/O: implemented by the real driver and by SimulatedUserIo. */
+export interface IUserIo {
+    leds(): Promise<number>;
+    setLed(led: number, on: boolean): Promise<void>;
+    buttonsPressed(): Promise<number>;
+}
+
+/** Software stand-in (no hardware access), to try the UI with a bitfile that has no user I/O block. */
+export class SimulatedUserIo implements IUserIo {
+    private _leds = 0;
+    private _buttons = 0;
+
+    async leds(): Promise<number> {
+        return this._leds;
+    }
+    async setLed(led: number, on: boolean): Promise<void> {
+        this._leds = on ? this._leds | (led & LED_MASK) : this._leds & ~led;
+    }
+    async buttonsPressed(): Promise<number> {
+        return this._buttons;
+    }
+    /** Simulates pressing / releasing a button (BUTTON_USER or BUTTON_RESET). */
+    press(button: number, down: boolean): void {
+        this._buttons = down ? this._buttons | (button & BUTTON_MASK) : this._buttons & ~button;
+    }
+}
+
+export class UserIoDriver implements IUserIo {
     private readonly _axiLite: IAxiLite;
 
     constructor(axiLite: IAxiLite) {
