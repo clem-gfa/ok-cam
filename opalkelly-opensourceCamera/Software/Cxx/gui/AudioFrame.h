@@ -60,6 +60,13 @@ public:
 
     AudioWaveCanvas* Canvas() { return m_canvas; }
 
+    // Used by the video recording: the audio is recorded with the same folder + session name (<session>_NNN.wav / .csv next
+    // to <session>_video.*), so that the files belong together.
+    bool IsRunning() const { return m_running && m_audio; }
+    bool IsRecording() const { return m_audio && m_audio->recording(); }
+    bool StartRecordingWith(const std::string& dir, const std::string& session, std::string& why);
+    void StopRecording();
+
 private:
     void OnStartStop(wxCommandEvent&);
     void OnRecord(wxCommandEvent&);

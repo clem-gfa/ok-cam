@@ -95,6 +95,8 @@ int main() {
         assert(st.packets == uint64_t(TOTAL - 5) && st.lostPackets == 5 && st.badBlocks == 0);
         assert(st.recordedFrames == uint64_t(TOTAL) * NS);   // lost packets replaced by silence: full duration
         assert(st.segments >= 2 && closed.size() == st.segments);
+        // the timebase of the latest packet is kept to stamp recorded video frames (VideoSync)
+        assert(st.lastTs == 1000000ull + uint64_t(TOTAL - 1) * NS * 528 && st.lastVideoFrames == 39 && st.lastSeq == uint32_t(TOTAL - 1));
 
         // files frame by frame across the segments
         std::vector<fs::path> wavs;

@@ -172,27 +172,34 @@ void AudioFrame::OnStartStop(wxCommandEvent&) {
     }
 }
 
+bool AudioFrame::StartRecordingWith(const std::string& dir, const std::string& session, std::string& why) {
+    if (!m_audio) { why = "the microphones are not running"; return false; }
+    if (!audioDiskSpaceOk(dir, 60, why)) return false;
+    m_audio->startRecording(dir, session);
+    m_msg->SetLabel("");
+    UpdateButtons();
+    return true;
+}
+
+void AudioFrame::StopRecording() {
+    if (m_audio && m_audio->recording()) m_audio->stopRecording();   // waits for the pending writes
+    UpdateButtons();
+}
+
 void AudioFrame::OnRecord(wxCommandEvent&) {
     if (!m_audio) return;
     if (m_audio->recording()) {
-        m_audio->stopRecording();           // waits for the pending writes (a fraction of a second at most)
-        UpdateButtons();
+        StopRecording();
         return;
     }
     wxDirDialog dlg(this, "Folder for the audio recordings", m_recDir.empty() ? wxGetHomeDir() : wxString::FromUTF8(m_recDir));
     if (dlg.ShowModal() != wxID_OK) return;
     m_recDir = dlg.GetPath().ToStdString();
-    std::string why;
-    if (!audioDiskSpaceOk(m_recDir, 60, why)) {
-        m_msg->SetLabel(wxString::FromUTF8(why));
-        return;
-    }
     char session[64];
     const std::time_t t = std::time(nullptr);
     std::strftime(session, sizeof session, "okcam_audio_%Y%m%d_%H%M%S", std::localtime(&t));
-    m_audio->startRecording(m_recDir, session);
-    m_msg->SetLabel("");
-    UpdateButtons();
+    std::string why;
+    if (!StartRecordingWith(m_recDir, session, why)) m_msg->SetLabel(wxString::FromUTF8(why));
 }
 
 void AudioFrame::OnAudioState(bool running, std::shared_ptr<AudioCapture> audio, const wxString& message) {

@@ -201,6 +201,11 @@ struct AudioStats {
     uint64_t badBlocks = 0;      // packets with an invalid header (stream resynchronised)
     uint64_t frames = 0;         // sample frames received (lost ones excluded)
     uint32_t lastSeq = 0;
+    // Timebase of the most recent packet: the FPGA clock (ticks of kAudioTickHz) when its first frame was sampled, and the
+    // latest video frame start the gateware saw (count + timestamp). Used to stamp recorded video frames.
+    uint64_t lastTs = 0;
+    uint32_t lastVideoFrames = 0;
+    uint64_t lastVideoTs = 0;
     uint64_t recordedFrames = 0; // frames written to the current recording (silence included)
     uint64_t segments = 0;       // closed segments of the current recording
     double   maxGapMs = 0;       // longest time between two pump() calls (host stalls)
@@ -589,6 +594,9 @@ private:
         m_stats.frames += h.nsamp;
         m_stats.skippedPackets++;
         m_stats.lastSeq = h.seq;
+        m_stats.lastTs = h.ts;
+        m_stats.lastVideoFrames = h.videoFrames;
+        m_stats.lastVideoTs = h.videoTs;
     }
 
     void handle(const uint8_t* p) {
@@ -608,6 +616,9 @@ private:
             m_stats.packets++;
             m_stats.frames += h.nsamp;
             m_stats.lastSeq = h.seq;
+            m_stats.lastTs = h.ts;
+            m_stats.lastVideoFrames = h.videoFrames;
+            m_stats.lastVideoTs = h.videoTs;
         }
         record(h, lostFrames);
     }

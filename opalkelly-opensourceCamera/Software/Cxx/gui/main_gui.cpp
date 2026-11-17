@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <cstdio>
 #include <deque>
 #include <functional>
@@ -48,6 +49,7 @@
 #include "GuiCameraBackend.h"
 #include "RgbViewport.h"
 #include "UserIoFrame.h"
+#include "VideoRecorder.h"
 #include "okFrontPanel.h"
 
 using okcli::GuiCameraBackend;
@@ -197,7 +199,7 @@ public:
     }
     void RequestStopCapture() { CallInCameraThread([this]() { m_continuous = false; }); }
     void RequestDisconnect() {
-        CallInCameraThread([this]() { m_continuous = false; m_cam.close(); m_serial.clear(); PostAudioState(false, nullptr, ""); });
+        CallInCameraThread([this]() { m_continuous = false; m_video.stop(); m_cam.close(); m_serial.clear(); PostAudioState(false, nullptr, ""); });
     }
 
     // ---- microphones (all run on this thread: the audio is serviced from it, see Entry()) -----------------------------
@@ -300,6 +302,8 @@ public:
     }
 
     const GuiCameraBackend::Frame& CurrentFrame() const { return m_frame; }
+    // Video recording (see VideoRecorder.h): frames are handed over from this thread, the GUI arms/stops it (thread-safe).
+    okcli::VideoRecorder& Video() { return m_video; }
 
 protected:
     ExitCode Entry() override {
@@ -326,6 +330,7 @@ protected:
         CheckCalledInCameraThread();
         (void)realm;  // the FrontPanelManager (the opener) already binds the realm
         m_continuous = false;
+        m_video.stop();
         m_cam.close();  // release any previously-open device so a switch/re-open of one succeeds
         PostAudioState(false, nullptr, "");
         m_serial = serial;
@@ -354,13 +359,14 @@ protected:
     void DoSingleCapture() {
         CheckCalledInCameraThread();
         std::string err;
-        if (m_cam.captureOnce(m_frame, err)) wxQueueEvent(m_sink, NewEvent(CaptureGood));
+        if (m_cam.captureOnce(m_frame, err)) { RecordFrame(); wxQueueEvent(m_sink, NewEvent(CaptureGood)); }
         else PostResult(CaptureFail, err);
     }
     void DoBufferedCapture() {
         CheckCalledInCameraThread();
         std::string err;
         if (m_cam.captureFrame(m_frame, err)) {
+            RecordFrame();
             auto* e = NewEvent(CaptureGood);
             e->SetExtraLong(0);  // missed-frame slot (the gateware exposes no count)
             wxQueueEvent(m_sink, e);
@@ -368,6 +374,24 @@ protected:
     }
 
 private:
+    // Hands the frame just captured to the video recorder (a copy into its queue: never waits for the disk / encoder), with
+    // the FPGA timebase the audio side knows (so that the video can be aligned with the audio files).
+    void RecordFrame() {
+        if (!m_video.recording()) return;
+        okcli::VideoSync sync;
+        if (m_cam.audioRunning()) {
+            if (auto a = m_cam.audio()) {
+                const okcli::AudioStats st = a->stats();
+                sync.valid = st.packets > 0;
+                sync.audioTs = st.lastTs;
+                sync.sofCount = st.lastVideoFrames;
+                sync.sofTs = st.lastVideoTs;
+                sync.audioSeq = st.lastSeq;
+            }
+        }
+        m_video.writeFrame(m_frame.rgb.data(), m_frame.width, m_frame.height, sync);
+    }
+
     // One service step of the microphones when no video transfer is running (the video transfers service them between
     // their slices), plus the FPGA counters about once a second for the status line.
     void ServiceAudio() {
@@ -423,6 +447,7 @@ private:
     bool m_continuous = false;
     std::string m_serial;
     std::chrono::steady_clock::time_point m_lastCounters{};
+    okcli::VideoRecorder m_video;
 };
 
 // ============================================================================================
@@ -760,6 +785,19 @@ private:
         {
             wxWindow* host = m_histChk->GetParent();
             wxSizer* column = m_histChk->GetContainingSizer();
+            // Video recording (any camera): H.264 through ffmpeg when available, else raw RGB; with the microphones running the
+            // audio is recorded with it (same session name), see VideoRecorder.h
+            m_recVideoLine = new wxStaticLine(host);
+            m_recVideoBtn = new wxToggleButton(host, wxID_ANY, "Record video...");
+            m_recVideoInfo = new wxStaticText(host, wxID_ANY, "");
+            m_recVideoBtn->Enable(false);
+            column->Add(m_recVideoLine, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            column->Add(m_recVideoBtn, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            column->Add(m_recVideoInfo, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            m_recVideoBtn->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) { toggleVideoRecording(e.IsChecked()); });
+            m_recTimer = new wxTimer(this);
+            Bind(wxEVT_TIMER, [this](wxTimerEvent&) { updateVideoRecordingStatus(); }, m_recTimer->GetId());
+
             m_boardToolsLine = new wxStaticLine(host);
             m_audioBtn = new wxButton(host, wxID_ANY, "Microphones...");
             m_ioBtn = new wxButton(host, wxID_ANY, "User I/O...");
@@ -862,6 +900,7 @@ private:
     }
 
     void enableCameraControls(bool on) {
+        if (m_recVideoBtn) m_recVideoBtn->Enable(on);
         m_panelCamera->Show(on);  // show/hide the whole control panel
         m_panelCamera->Layout();
         m_sidebar->FitInside();
@@ -1134,6 +1173,68 @@ private:
         }
     }
 
+    // ---- video (+ audio) recording ------------------------------------------------------------------------------------------
+    void toggleVideoRecording(bool on) {
+        if (!m_worker) { m_recVideoBtn->SetValue(false); return; }
+        if (!on) { stopVideoRecording(); return; }
+        wxDirDialog dlg(this, "Folder for the recordings", m_recDir.IsEmpty() ? wxGetHomeDir() : m_recDir);
+        if (dlg.ShowModal() != wxID_OK) { m_recVideoBtn->SetValue(false); return; }
+        m_recDir = dlg.GetPath();
+        char session[64];
+        const std::time_t t = std::time(nullptr);
+        std::strftime(session, sizeof session, "okcam_%Y%m%d_%H%M%S", std::localtime(&t));
+        okcli::VideoRecorderOptions opt;
+        if (const char* c = std::getenv("OKCAM_VIDEO_CODEC")) opt.codec = c;     // auto | h264 | mjpeg | ffv1 | raw
+        std::string why;
+        if (!m_worker->Video().start(m_recDir.ToStdString(), session, opt, why) ||
+            !okcli::videoDiskSpaceOk(m_recDir.ToStdString(), m_worker->Video().codec(), why)) {
+            m_worker->Video().stop();
+            m_recVideoBtn->SetValue(false);
+            m_recVideoInfo->SetLabel(wxString::FromUTF8(why));
+            relayoutSidebar();
+            return;
+        }
+        // With the microphones running, record the audio too (same folder + session name)
+        wxString audioNote;
+        if (m_audioFrame && m_audioFrame->IsRunning() && !m_audioFrame->IsRecording()) {
+            std::string awhy;
+            if (m_audioFrame->StartRecordingWith(m_recDir.ToStdString(), session, awhy)) audioNote = " + audio";
+            else audioNote = " (audio not recorded: " + wxString::FromUTF8(awhy) + ")";
+        }
+        m_recVideoNote = audioNote;
+        m_recVideoBtn->SetLabel("Stop recording");
+        m_recTimer->Start(500);
+        updateVideoRecordingStatus();
+    }
+    void stopVideoRecording() {
+        if (m_recTimer) m_recTimer->Stop();
+        if (m_worker) m_worker->Video().stop();                                   // waits until the file is complete
+        if (m_audioFrame && m_audioFrame->IsRecording() && !m_recVideoNote.IsEmpty()) m_audioFrame->StopRecording();
+        m_recVideoBtn->SetValue(false);
+        m_recVideoBtn->SetLabel("Record video...");
+        updateVideoRecordingStatus(true);
+    }
+    void updateVideoRecordingStatus(bool final = false) {
+        if (!m_worker) return;
+        const okcli::VideoStats st = m_worker->Video().stats();
+        wxString t;
+        if (!st.error.empty()) {
+            t = "Video recording stopped: " + wxString::FromUTF8(st.error);
+            if (m_recTimer) m_recTimer->Stop();
+            m_recVideoBtn->SetValue(false);
+            m_recVideoBtn->SetLabel("Record video...");
+        } else if (st.armed || final) {
+            t = wxString::Format("%s%s: %llu frames", final ? "Recorded" : "Recording", m_recVideoNote, (unsigned long long)st.framesWritten);
+            if (st.framesDropped) t += wxString::Format(", %llu DROPPED (encoder/disk too slow)", (unsigned long long)st.framesDropped);
+            t += "\n" + wxString::FromUTF8(st.encoder);
+            if (!st.path.empty()) t += "\n" + wxFileName(wxString::FromUTF8(st.path)).GetFullName();
+        }
+        m_recVideoInfo->SetLabel(t);
+        m_recVideoInfo->Wrap(m_sidebar->GetClientSize().GetWidth() - FromDIP(48));
+        relayoutSidebar();
+    }
+    void relayoutSidebar() { if (m_sidebar) { m_sidebar->Layout(); m_sidebar->FitInside(); } }
+
     void showBoardTools(bool on) {
         if (m_boardToolsLine) m_boardToolsLine->Show(on);
         if (m_audioBtn) m_audioBtn->Show(on);
@@ -1194,6 +1295,7 @@ private:
 
     void OnClose(wxCloseEvent& e) {
         stopBusy();
+        if (m_worker && m_worker->Video().recording()) stopVideoRecording();
         stopRealm();
         e.Skip();
     }
@@ -1257,6 +1359,11 @@ private:
     wxChoice* m_sizeChoice = nullptr;
     wxChoice* m_imageSizeChoice = nullptr;
     wxCheckBox* m_histChk = nullptr;
+    wxStaticLine* m_recVideoLine = nullptr;
+    wxToggleButton* m_recVideoBtn = nullptr;
+    wxStaticText* m_recVideoInfo = nullptr;
+    wxTimer* m_recTimer = nullptr;
+    wxString m_recDir, m_recVideoNote;
     wxStaticLine* m_boardToolsLine = nullptr;
     wxButton* m_audioBtn = nullptr;
     wxButton* m_ioBtn = nullptr;
