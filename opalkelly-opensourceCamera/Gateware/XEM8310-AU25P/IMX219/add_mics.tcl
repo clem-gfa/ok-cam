@@ -62,6 +62,11 @@ set_property -dict [list \
 }
 
 add_files -fileset constrs_1 -norecurse [list ../Microphones/mic_pins.xdc ../Microphones/mic_timing.xdc]
+if {$mic_use_ddr} {
+    # le chemin DDR4 traverse deux familles d'horloges sans primaire commune (refclk / okUH0) : voir le fichier
+    add_files -fileset constrs_1 -norecurse ../Microphones/mic_cdc.xdc
+    set_property USED_IN_SYNTHESIS false [get_files mic_cdc.xdc]
+}
 update_compile_order -fileset sources_1
 
 # --- FrontPanel : endpoints supplementaires ------------------------------------------------------
