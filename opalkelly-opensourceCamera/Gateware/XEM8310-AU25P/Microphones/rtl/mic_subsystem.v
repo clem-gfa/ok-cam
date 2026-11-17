@@ -16,8 +16,6 @@ module mic_subsystem #(
     parameter INVERT_CLK     = 0,
     parameter FIFO_AW        = 15,     // profondeur du FIFO audio = 2^FIFO_AW mots de 32 bits (15 -> 128 Kio, ~3,6 ms) ; doit valoir celle de l'IP fifo_audio_pkt
     parameter USE_DDR        = 0,
-    parameter RING_BASE_HI   = 16'hA000,       // 16 bits de poids fort de l'adresse de l'anneau (0xA0000000 : dans la DDR4, loin des tampons video)
-    parameter RING_AW        = 14,     // anneau de 2^RING_AW paquets de 4 Kio (14 -> 64 Mio)
     parameter BLOCK_WORDS    = 256     // taille de bloc de la pipe (mots 32 bits) : doit valoir le bloc utilise par le PC (1024 octets = 256)
 ) (
     input  wire        clk,
@@ -51,46 +49,22 @@ module mic_subsystem #(
     output wire        mic_clk_o,
     input  wire [31:0] mic_data_i,
 
-    // ---- acces a la DDR4 (USE_DDR = 1) : maitre AXI4 128 bits dans le domaine ui_clk de la DDR4 ----------------
-    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 ui_clk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF m_axi, ASSOCIATED_RESET ui_aresetn" *)
-    input  wire        ui_clk,
-    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 ui_aresetn RST" *)
-    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
-    input  wire        ui_aresetn,
-    output wire [31:0]  m_axi_awaddr,
-    output wire [7:0]   m_axi_awlen,
-    output wire [2:0]   m_axi_awsize,
-    output wire [1:0]   m_axi_awburst,
-    output wire         m_axi_awlock,
-    output wire [3:0]   m_axi_awcache,
-    output wire [2:0]   m_axi_awprot,
-    output wire [3:0]   m_axi_awqos,
-    output wire         m_axi_awvalid,
-    input  wire         m_axi_awready,
-    output wire [127:0] m_axi_wdata,
-    output wire [15:0]  m_axi_wstrb,
-    output wire         m_axi_wlast,
-    output wire         m_axi_wvalid,
-    input  wire         m_axi_wready,
-    input  wire [1:0]   m_axi_bresp,
-    input  wire         m_axi_bvalid,
-    output wire         m_axi_bready,
-    output wire [31:0]  m_axi_araddr,
-    output wire [7:0]   m_axi_arlen,
-    output wire [2:0]   m_axi_arsize,
-    output wire [1:0]   m_axi_arburst,
-    output wire         m_axi_arlock,
-    output wire [3:0]   m_axi_arcache,
-    output wire [2:0]   m_axi_arprot,
-    output wire [3:0]   m_axi_arqos,
-    output wire         m_axi_arvalid,
-    input  wire         m_axi_arready,
-    input  wire [127:0] m_axi_rdata,
-    input  wire [1:0]   m_axi_rresp,
-    input  wire         m_axi_rlast,
-    input  wire         m_axi_rvalid,
-    output wire         m_axi_rready
+    // ---- horloge de la DDR4 (USE_DDR = 1) et liaison avec audio_ddr_ring (module separe, une seule horloge : le
+    // ---- maitre AXI y est isole pour que Vivado l'associe sans ambiguite a l'horloge de la DDR4) ----
+    input  wire         ui_clk,
+    output wire [127:0] ring_stg_dout,
+    output wire         ring_stg_empty,
+    output wire [9:0]   ring_stg_avail,
+    input  wire         ring_stg_rd_en,
+    input  wire [127:0] ring_out_din,
+    input  wire         ring_out_wr_en,
+    output wire         ring_out_full,
+    output wire [11:0]  ring_out_wr_count,
+    output wire         ring_rst_req,
+    input  wire         ring_idle,
+    input  wire         ring_space_ok,
+    input  wire [15:0]  ring_used,
+    input  wire [15:0]  ring_peak
 );
     // ---- commandes (okClk -> clk, quasi statiques) ------------------------------------------
     (* ASYNC_REG = "TRUE" *) reg [15:0] c1, c2;
@@ -152,20 +126,16 @@ module mic_subsystem #(
         assign wo23_ep_datain_mic_level = {{(32 - FIFO_AW){1'b0}}, rd_cnt};
         assign wo24_ep_datain_mic_ring = 32'd0;
         // pas d'acces DDR4
-        assign m_axi_awaddr = 32'd0; assign m_axi_awlen = 8'd0; assign m_axi_awsize = 3'd0; assign m_axi_awburst = 2'd0;
-        assign m_axi_awlock = 1'b0; assign m_axi_awcache = 4'd0; assign m_axi_awprot = 3'd0; assign m_axi_awqos = 4'd0;
-        assign m_axi_awvalid = 1'b0; assign m_axi_wdata = 128'd0; assign m_axi_wstrb = 16'd0; assign m_axi_wlast = 1'b0;
-        assign m_axi_wvalid = 1'b0; assign m_axi_bready = 1'b0; assign m_axi_araddr = 32'd0; assign m_axi_arlen = 8'd0;
-        assign m_axi_arsize = 3'd0; assign m_axi_arburst = 2'd0; assign m_axi_arlock = 1'b0; assign m_axi_arcache = 4'd0;
-        assign m_axi_arprot = 3'd0; assign m_axi_arqos = 4'd0; assign m_axi_arvalid = 1'b0; assign m_axi_rready = 1'b0;
+        assign ring_stg_dout = 128'd0; assign ring_stg_empty = 1'b1; assign ring_stg_avail = 10'd0;
+        assign ring_out_full = 1'b0; assign ring_out_wr_count = 12'd0; assign ring_rst_req = 1'b0;
     end else begin : g_ddr
         // ---- reset : les FIFO ne sont vides que lorsque l'anneau est au repos (jamais en pleine rafale AXI) ----
         (* ASYNC_REG = "TRUE" *) reg [1:0] rq;
         always @(posedge ui_clk) rq <= {rq[0], rst};
         wire rst_req_ui = rq[1];
-        wire ring_idle;
+        wire ring_idle_w;
         (* ASYNC_REG = "TRUE" *) reg [1:0] idl;
-        always @(posedge clk) idl <= {idl[0], ring_idle};
+        always @(posedge clk) idl <= {idl[0], ring_idle_w};
         wire fifo_rst_stage = rst & idl[1];                 // domaine clk (wr_clk du FIFO d'entree)
 
 
@@ -179,26 +149,18 @@ module mic_subsystem #(
             .dout(stg_dout), .full(stg_full), .empty(stg_empty),
             .wr_data_count(stg_wcnt), .rd_data_count(stg_rcnt));
 
-        // ---- anneau en DDR4 ----
-        wire [127:0] out_din; wire out_wr_en, out_full, out_empty; wire [11:0] out_wcnt; wire [13:0] out_rcnt;
-        wire ring_space_ui; wire [15:0] used_ui, peak_ui, axi_err;
-        audio_ddr_ring #(.RING_BASE({RING_BASE_HI[15:0], 16'h0000}), .RING_AW(RING_AW), .STG_CNT_W(10), .OUT_CNT_W(12), .OUT_DEPTH(2048)) u_ring (
-            .clk(ui_clk), .aresetn(ui_aresetn), .rst_req(rst_req_ui),
-            .stg_dout(stg_dout), .stg_empty(stg_empty), .stg_avail(stg_rcnt), .stg_rd_en(stg_rd_en),
-            .out_din(out_din), .out_wr_en(out_wr_en), .out_full(out_full), .out_wr_count(out_wcnt),
-            .m_axi_awaddr(m_axi_awaddr), .m_axi_awlen(m_axi_awlen), .m_axi_awsize(m_axi_awsize), .m_axi_awburst(m_axi_awburst),
-            .m_axi_awlock(m_axi_awlock), .m_axi_awcache(m_axi_awcache), .m_axi_awprot(m_axi_awprot), .m_axi_awqos(m_axi_awqos),
-            .m_axi_awvalid(m_axi_awvalid), .m_axi_awready(m_axi_awready),
-            .m_axi_wdata(m_axi_wdata), .m_axi_wstrb(m_axi_wstrb), .m_axi_wlast(m_axi_wlast), .m_axi_wvalid(m_axi_wvalid), .m_axi_wready(m_axi_wready),
-            .m_axi_bresp(m_axi_bresp), .m_axi_bvalid(m_axi_bvalid), .m_axi_bready(m_axi_bready),
-            .m_axi_araddr(m_axi_araddr), .m_axi_arlen(m_axi_arlen), .m_axi_arsize(m_axi_arsize), .m_axi_arburst(m_axi_arburst),
-            .m_axi_arlock(m_axi_arlock), .m_axi_arcache(m_axi_arcache), .m_axi_arprot(m_axi_arprot), .m_axi_arqos(m_axi_arqos),
-            .m_axi_arvalid(m_axi_arvalid), .m_axi_arready(m_axi_arready),
-            .m_axi_rdata(m_axi_rdata), .m_axi_rresp(m_axi_rresp), .m_axi_rlast(m_axi_rlast), .m_axi_rvalid(m_axi_rvalid), .m_axi_rready(m_axi_rready),
-            .idle(ring_idle), .space_ok(ring_space_ui), .used_pkts(used_ui), .peak_pkts(peak_ui), .axi_errors(axi_err));
+        // ---- liaison avec audio_ddr_ring (instance separee dans le block design) ----
+        wire [127:0] out_din = ring_out_din; wire out_wr_en = ring_out_wr_en;
+        wire out_full, out_empty; wire [11:0] out_wcnt; wire [13:0] out_rcnt;
+        assign ring_stg_dout = stg_dout; assign ring_stg_empty = stg_empty; assign ring_stg_avail = stg_rcnt;
+        assign ring_out_full = out_full; assign ring_out_wr_count = out_wcnt;
+        assign ring_rst_req = rst_req_ui;
+        assign stg_rd_en = ring_stg_rd_en;
+        wire ring_space_ui = ring_space_ok; wire [15:0] used_ui = ring_used, peak_ui = ring_peak;
+        assign ring_idle_w = ring_idle;
 
         // ---- FIFO de sortie : 128 bits (ui_clk) -> 32 bits (okClk), 2048 beats = 8192 mots ----
-        wire fifo_rst_out = rst_req_ui & ring_idle;           // domaine ui_clk (wr_clk du FIFO de sortie)
+        wire fifo_rst_out = rst_req_ui & ring_idle_w;           // domaine ui_clk (wr_clk du FIFO de sortie)
         fifo_audio_out u_out (
             .rst(fifo_rst_out), .wr_clk(ui_clk), .rd_clk(ok_clk),
             .din(out_din), .wr_en(out_wr_en), .rd_en(btpo_ep_read_audio),

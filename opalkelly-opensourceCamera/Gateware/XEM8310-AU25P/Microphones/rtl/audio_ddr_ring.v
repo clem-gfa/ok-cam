@@ -2,6 +2,9 @@
 //
 //   FIFO d'entree (stage, 128 bits, lecture FWFT)  --AXI ecriture-->  anneau en DDR4  --AXI lecture-->  FIFO de sortie (128 bits)
 //
+// Module a UNE seule horloge (celle de la DDR4) : il sert de module de reference du block design, ce qui evite toute
+// ambiguite d'association entre le bus m_axi et plusieurs horloges.
+//
 // Un paquet = PKT_BEATS (256) mots de 128 bits = 4096 octets = une rafale AXI INCR de 256 beats (alignee sur
 // 4 Kio : ne franchit jamais une frontiere de 4 Kio). L'anneau contient RING_PKTS paquets (puissance de 2) a
 // partir de RING_BASE. Une seule rafale d'ecriture et une seule de lecture a la fois.
@@ -19,7 +22,11 @@ module audio_ddr_ring #(
     parameter        OUT_CNT_W  = 12,            // largeur de out_wr_count (beats du FIFO de sortie)
     parameter        OUT_DEPTH  = 2048           // profondeur du FIFO de sortie en beats
 ) (
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF m_axi, ASSOCIATED_RESET aresetn" *)
     input  wire                 clk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn RST" *)
+    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire                 aresetn,
     input  wire                 rst_req,
 

@@ -16,23 +16,34 @@ module tb_mic_subsystem_ddr;
     wire [127:0] wdata, rdata; wire [1:0] bresp, rresp;
     wire [2:0] awsize, arsize, awprot, arprot; wire [1:0] awburst, arburst; wire awlock, arlock; wire [3:0] awcache, awqos, arcache, arqos; wire [15:0] wstrb;
     wire [31:0] ring;
-    mic_subsystem #(.STD_PERIODS(20), .SETTLE_PERIODS(10), .BLOCK_WORDS(1024), .USE_DDR(1), .RING_AW(4)) dut (
-        .clk(clk), .locked(1'b1), .ok_clk(okclk), .vclk(vclk), .vsof(1'b0),
-        .wi01_ep_dataout_mic_ctrl(ctrl), .wo20_ep_datain_mic_status(st),
-        .wo21_ep_datain_mic_dropped(dropped), .wo22_ep_datain_mic_overruns(overruns),
-        .btpo_ep_datain_audio(pipe_dout), .btpo_ep_read_audio(rd), .btpo_ep_blockstrobe_audio(1'b0), .btpo_ep_ready_audio(ready), .wo23_ep_datain_mic_level(level),
-        .mic_clk_o(mic_clk), .mic_data_i(dat), .wo24_ep_datain_mic_ring(ring),
-        .ui_clk(uclk), .ui_aresetn(uaresetn),
+    // liaison mic_subsystem <-> audio_ddr_ring (instances separees, comme dans le block design)
+    wire [127:0] r_stg_dout, r_out_din; wire r_stg_empty, r_stg_rd_en, r_out_wr_en, r_out_full, r_rst_req, r_idle, r_space_ok;
+    wire [9:0] r_stg_avail; wire [11:0] r_out_wcnt; wire [15:0] r_used, r_peak, r_axierr;
+    audio_ddr_ring #(.RING_BASE(32'hA0000000), .RING_AW(4)) ringm (
+        .clk(uclk), .aresetn(uaresetn), .rst_req(r_rst_req),
+        .stg_dout(r_stg_dout), .stg_empty(r_stg_empty), .stg_avail(r_stg_avail), .stg_rd_en(r_stg_rd_en),
+        .out_din(r_out_din), .out_wr_en(r_out_wr_en), .out_full(r_out_full), .out_wr_count(r_out_wcnt),
         .m_axi_awaddr(awaddr), .m_axi_awlen(awlen), .m_axi_awsize(awsize), .m_axi_awburst(awburst), .m_axi_awlock(awlock), .m_axi_awcache(awcache),
         .m_axi_awprot(awprot), .m_axi_awqos(awqos), .m_axi_awvalid(awvalid), .m_axi_awready(awready),
         .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(wlast), .m_axi_wvalid(wvalid), .m_axi_wready(wready),
         .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(bready),
         .m_axi_araddr(araddr), .m_axi_arlen(arlen), .m_axi_arsize(arsize), .m_axi_arburst(arburst), .m_axi_arlock(arlock), .m_axi_arcache(arcache),
         .m_axi_arprot(arprot), .m_axi_arqos(arqos), .m_axi_arvalid(arvalid), .m_axi_arready(arready),
-        .m_axi_rdata(rdata), .m_axi_rresp(rresp), .m_axi_rlast(rlast), .m_axi_rvalid(rvalid), .m_axi_rready(rready));
+        .m_axi_rdata(rdata), .m_axi_rresp(rresp), .m_axi_rlast(rlast), .m_axi_rvalid(rvalid), .m_axi_rready(rready),
+        .idle(r_idle), .space_ok(r_space_ok), .used_pkts(r_used), .peak_pkts(r_peak), .axi_errors(r_axierr));
     axi_mem_model #(.BASE(32'hA0000000), .WORDS(16*256*2)) mem (
         .clk(uclk), .aresetn(uaresetn), .awaddr(awaddr), .awlen(awlen), .awvalid(awvalid), .awready(awready), .wdata(wdata), .wlast(wlast), .wvalid(wvalid), .wready(wready),
         .bresp(bresp), .bvalid(bvalid), .bready(bready), .araddr(araddr), .arlen(arlen), .arvalid(arvalid), .arready(arready), .rdata(rdata), .rresp(rresp), .rlast(rlast), .rvalid(rvalid), .rready(rready));
+    mic_subsystem #(.STD_PERIODS(20), .SETTLE_PERIODS(10), .BLOCK_WORDS(1024), .USE_DDR(1)) dut (
+        .clk(clk), .locked(1'b1), .ok_clk(okclk), .vclk(vclk), .vsof(1'b0),
+        .wi01_ep_dataout_mic_ctrl(ctrl), .wo20_ep_datain_mic_status(st),
+        .wo21_ep_datain_mic_dropped(dropped), .wo22_ep_datain_mic_overruns(overruns),
+        .btpo_ep_datain_audio(pipe_dout), .btpo_ep_read_audio(rd), .btpo_ep_blockstrobe_audio(1'b0), .btpo_ep_ready_audio(ready), .wo23_ep_datain_mic_level(level),
+        .mic_clk_o(mic_clk), .mic_data_i(dat), .wo24_ep_datain_mic_ring(ring),
+        .ui_clk(uclk),
+        .ring_stg_dout(r_stg_dout), .ring_stg_empty(r_stg_empty), .ring_stg_avail(r_stg_avail), .ring_stg_rd_en(r_stg_rd_en),
+        .ring_out_din(r_out_din), .ring_out_wr_en(r_out_wr_en), .ring_out_full(r_out_full), .ring_out_wr_count(r_out_wcnt),
+        .ring_rst_req(r_rst_req), .ring_idle(r_idle), .ring_space_ok(r_space_ok), .ring_used(r_used), .ring_peak(r_peak));
 
     // micros (meme modele que tb_mic_front)
     reg [63:0] src [0:L-1];
@@ -67,8 +78,8 @@ module tb_mic_subsystem_ddr;
         else if (rd) begin cnt <= cnt - 1; if (cnt == 1) rd <= 1'b0; end
     end
     always @(posedge clk) if (dut.pdm_ce) begin $fdisplay(fb, "%h", dut.pdm); npdm = npdm + 1; end
-    always @(posedge clk) if (npdm >= NPDM && dut.g_ddr.u_ring.used_pkts == 0 && dut.g_ddr.out_rcnt < 1024 && dut.g_ddr.stg_empty) begin
+    always @(posedge clk) if (npdm >= NPDM && r_used == 0 && dut.g_ddr.out_rcnt < 1024 && dut.g_ddr.stg_empty) begin
         $fclose(fa); $fclose(fb);
-        $display("OK: %0d mots lus, status=%h dropped=%0d overruns=%0d, anneau (pic,courant)=(%0d,%0d), erreurs AXI modele=%0d DUT=%0d", nwords, st, dropped, overruns, ring[31:16], ring[15:0], mem.errors, dut.g_ddr.axi_err); $finish;
+        $display("OK: %0d mots lus, status=%h dropped=%0d overruns=%0d, anneau (pic,courant)=(%0d,%0d), erreurs AXI modele=%0d DUT=%0d", nwords, st, dropped, overruns, ring[31:16], ring[15:0], mem.errors, r_axierr); $finish;
     end
 endmodule

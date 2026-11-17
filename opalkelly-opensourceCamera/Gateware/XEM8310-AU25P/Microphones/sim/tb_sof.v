@@ -2,7 +2,7 @@
 module tb_sof;
     reg clk = 0; always #5 clk = ~clk;
     reg v = 0, r = 0, u = 0; wire sof;
-    axis_sof_monitor dut (.aclk(clk), .mon_tvalid(v), .mon_tready(r), .mon_tuser(u), .sof(sof));
+    axis_sof_monitor dut (.aclk(clk), .mon_tvalid(v), .mon_tready(r), .mon_tuser(u), .mon_tdata(96'd0), .mon_tlast(1'b0), .sof(sof));
     integer n = 0, pulses = 0, expected = 0, cyc = 0;
     // 5 trames de 16 pixels, ready/valid aleatoires ; tuser = 1 sur le 1er pixel de la trame
     integer px = 0;

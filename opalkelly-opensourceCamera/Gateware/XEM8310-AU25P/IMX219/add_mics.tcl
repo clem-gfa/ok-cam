@@ -87,7 +87,6 @@ if { [catch {set mic_subsystem_0 [create_bd_cell -type module -reference $block_
 }
 set_property CONFIG.FIFO_AW $mic_fifo_aw [get_bd_cells mic_subsystem_0]
 set_property CONFIG.USE_DDR $mic_use_ddr [get_bd_cells mic_subsystem_0]
-set_property CONFIG.RING_AW $mic_ring_aw [get_bd_cells mic_subsystem_0]
 
 # Debut de trame video : detecteur en observateur (interface AXI-Stream « monitor ») sur le flux qui entre
 # dans le VDMA (v_tpg_0 -> axi_vdma_0/S_AXIS_S2MM). Si le branchement de l'observateur echoue dans votre
@@ -125,13 +124,35 @@ connect_bd_net [get_bd_pins frontpanel_0/okClk]  [get_bd_pins mic_subsystem_0/ok
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out2]  [get_bd_pins mic_subsystem_0/clk] [get_bd_pins mic_subsystem_0/vclk]
 connect_bd_net [get_bd_pins mic_locked/dout]     [get_bd_pins mic_subsystem_0/locked]
 
-# Anneau en DDR4 : le sous-systeme devient un maitre AXI de plus sur la DDR4 (smartconnect_0, horloge utilisateur de la DDR4)
+# Anneau en DDR4 : le maitre AXI est un module de reference SEPARE (audio_ddr_ring) a UNE seule horloge (celle de la DDR4).
+# Dans un module a plusieurs horloges, Vivado associait le bus m_axi a deux horloges a la fois (BD 41-1732) puis donnait
+# a l'interface la mauvaise frequence (BD 41-237). Il devient un maitre AXI de plus sur smartconnect_0 (S02_AXI).
 if {$mic_use_ddr} {
+    set audio_ddr_ring_0 [ create_bd_cell -type module -reference audio_ddr_ring audio_ddr_ring_0 ]
+    set_property CONFIG.RING_AW $mic_ring_aw [get_bd_cells audio_ddr_ring_0]
     set_property CONFIG.NUM_SI {3} [get_bd_cells smartconnect_0]
-    connect_bd_intf_net [get_bd_intf_pins mic_subsystem_0/m_axi] [get_bd_intf_pins smartconnect_0/S02_AXI]
-    connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk]   [get_bd_pins mic_subsystem_0/ui_clk]
-    connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins mic_subsystem_0/ui_aresetn]
-    assign_bd_address -offset 0x80000000 -range $ddr4_range -target_address_space [get_bd_addr_spaces mic_subsystem_0/m_axi] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
+    connect_bd_intf_net [get_bd_intf_pins audio_ddr_ring_0/m_axi] [get_bd_intf_pins smartconnect_0/S02_AXI]
+    connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk]   [get_bd_pins audio_ddr_ring_0/clk] [get_bd_pins mic_subsystem_0/ui_clk]
+    connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins audio_ddr_ring_0/aresetn]
+    # signaux simples entre le sous-systeme (FIFO) et l'anneau
+    foreach {src dst} {
+        mic_subsystem_0/ring_stg_dout     audio_ddr_ring_0/stg_dout
+        mic_subsystem_0/ring_stg_empty    audio_ddr_ring_0/stg_empty
+        mic_subsystem_0/ring_stg_avail    audio_ddr_ring_0/stg_avail
+        audio_ddr_ring_0/stg_rd_en        mic_subsystem_0/ring_stg_rd_en
+        audio_ddr_ring_0/out_din          mic_subsystem_0/ring_out_din
+        audio_ddr_ring_0/out_wr_en        mic_subsystem_0/ring_out_wr_en
+        mic_subsystem_0/ring_out_full     audio_ddr_ring_0/out_full
+        mic_subsystem_0/ring_out_wr_count audio_ddr_ring_0/out_wr_count
+        mic_subsystem_0/ring_rst_req      audio_ddr_ring_0/rst_req
+        audio_ddr_ring_0/idle             mic_subsystem_0/ring_idle
+        audio_ddr_ring_0/space_ok         mic_subsystem_0/ring_space_ok
+        audio_ddr_ring_0/used_pkts        mic_subsystem_0/ring_used
+        audio_ddr_ring_0/peak_pkts        mic_subsystem_0/ring_peak
+    } {
+        connect_bd_net [get_bd_pins $src] [get_bd_pins $dst]
+    }
+    assign_bd_address -offset 0x80000000 -range $ddr4_range -target_address_space [get_bd_addr_spaces audio_ddr_ring_0/m_axi] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
 }
 
 # Pads
