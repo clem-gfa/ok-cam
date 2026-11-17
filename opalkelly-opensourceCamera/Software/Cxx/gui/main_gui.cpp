@@ -44,8 +44,10 @@
 #include <utility>
 #include <vector>
 
+#include "AudioFrame.h"
 #include "GuiCameraBackend.h"
 #include "RgbViewport.h"
+#include "UserIoFrame.h"
 #include "okFrontPanel.h"
 
 using okcli::GuiCameraBackend;
@@ -130,13 +132,25 @@ private:
     std::set<std::string> m_pending;
 };
 
+// Worker -> GUI payloads for the microphones and the board user I/O (XEM8310 / DARWIN).
+struct AudioStateEvent {
+    bool running = false;
+    std::shared_ptr<okcli::AudioCapture> audio;   // shared: the GUI reads stats/peaks and starts/stops recordings on it
+    std::string message;
+};
+struct UserIoEvent {
+    bool present = false;
+    uint32_t leds = 0, buttons = 0;
+    std::string message;
+};
+
 // ============================================================================================
 // CameraWorker — runs camera operations on a dedicated thread (no enumeration; that's FPManager's job).
 // ============================================================================================
 class CameraWorker : public wxThread {
 public:
     enum Result { SetupGood, SetupFail, CaptureGood, CaptureFail, CaptureShort, CaptureTimeout, Error,
-                  DeviceProbed };
+                  DeviceProbed, AudioState, AudioCounters, UserIoPresence, UserIoState };
     using Action = std::function<void()>;
 
     // Opens a device by serial through the FrontPanelManager (the single open authority).
@@ -182,7 +196,68 @@ public:
         CallInCameraThread([this]() { m_continuous = true; DoBufferedCapture(); });
     }
     void RequestStopCapture() { CallInCameraThread([this]() { m_continuous = false; }); }
-    void RequestDisconnect() { CallInCameraThread([this]() { m_continuous = false; m_cam.close(); m_serial.clear(); }); }
+    void RequestDisconnect() {
+        CallInCameraThread([this]() { m_continuous = false; m_cam.close(); m_serial.clear(); PostAudioState(false, nullptr, ""); });
+    }
+
+    // ---- microphones (all run on this thread: the audio is serviced from it, see Entry()) -----------------------------
+    void RequestAudioStart() {
+        CallInCameraThread([this]() {
+            CheckCalledInCameraThread();
+            std::string err;
+            if (m_cam.audioStart(err)) PostAudioState(true, m_cam.audio(), "");
+            else PostAudioState(false, m_cam.audio(), err);
+        });
+    }
+    void RequestAudioStop() {
+        CallInCameraThread([this]() {
+            CheckCalledInCameraThread();
+            m_cam.audioStop();
+            PostAudioState(false, m_cam.audio(), "");
+        });
+    }
+
+    // ---- board user I/O (LEDs + buttons) -------------------------------------------------------------------------------
+    void RequestUserIoProbe() {
+        CallInCameraThread([this]() {
+            CheckCalledInCameraThread();
+            UserIoEvent st;
+            try {
+                okcli::UserIoDriver* io = m_cam.userIo();
+                st.present = io && io->isPresent();
+                if (!io) st.message = "this device has no user I/O";
+            } catch (const std::exception& e) {
+                st.message = std::string("presence check failed: ") + e.what();
+            }
+            PostUserIo(UserIoPresence, st);
+        });
+    }
+    void RequestUserIoPoll() {
+        CallInCameraThread([this]() {
+            CheckCalledInCameraThread();
+            UserIoEvent st;
+            try {
+                if (okcli::UserIoDriver* io = m_cam.userIo()) {
+                    st.present = true;
+                    st.leds = io->leds();
+                    st.buttons = io->buttonsPressed();
+                    PostUserIo(UserIoState, st);
+                }
+            } catch (const std::exception& e) {
+                PostError(wxString("user I/O: ") + e.what());
+            }
+        });
+    }
+    void RequestSetLed(uint32_t led, bool on) {
+        CallInCameraThread([this, led, on]() {
+            CheckCalledInCameraThread();
+            try {
+                if (okcli::UserIoDriver* io = m_cam.userIo()) io->setLed(led, on);
+            } catch (const std::exception& e) {
+                PostError(wxString("user I/O: ") + e.what());
+            }
+        });
+    }
     void RequestSetExposure(double e) {
         CallInCameraThread([this, e]() { CheckCalledInCameraThread(); std::string err; m_cam.setExposure(e, err); });
     }
@@ -231,14 +306,17 @@ protected:
         for (;;) {
             Action action;
             wxMessageQueueError rc;
-            if (m_continuous) rc = m_requests.ReceiveTimeout(0, action);
+            if (m_continuous || m_cam.audioRunning()) rc = m_requests.ReceiveTimeout(0, action);
             else rc = m_requests.Receive(action);
             switch (rc) {
                 case wxMSGQUEUE_NO_ERROR:
                     if (!action) { m_cam.close(); return nullptr; }  // empty action = exit
                     try { action(); } catch (const std::exception& e) { PostError(e.what()); }
                     break;
-                case wxMSGQUEUE_TIMEOUT: DoBufferedCapture(); break;
+                case wxMSGQUEUE_TIMEOUT:
+                    if (m_cam.audioRunning()) ServiceAudio();
+                    if (m_continuous) DoBufferedCapture();   // also services the audio between slices of each frame
+                    break;
                 case wxMSGQUEUE_MISC_ERROR: PostError("Failed to read message"); break;
             }
         }
@@ -249,6 +327,7 @@ protected:
         (void)realm;  // the FrontPanelManager (the opener) already binds the realm
         m_continuous = false;
         m_cam.close();  // release any previously-open device so a switch/re-open of one succeeds
+        PostAudioState(false, nullptr, "");
         m_serial = serial;
         std::string err;
         OpalKelly::FrontPanelPtr fp = m_opener(serial);
@@ -289,6 +368,39 @@ protected:
     }
 
 private:
+    // One service step of the microphones when no video transfer is running (the video transfers service them between
+    // their slices), plus the FPGA counters about once a second for the status line.
+    void ServiceAudio() {
+        std::string err;
+        if (!m_cam.audioPump(err)) {
+            PostAudioState(false, m_cam.audio(), "microphones stopped: " + err);
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - m_lastCounters > std::chrono::seconds(1)) {
+            m_lastCounters = now;
+            okcli::MicCounters c;
+            if (m_cam.audioCounters(c, err)) {
+                auto* e = NewEvent(AudioCounters);
+                e->SetPayload(c);
+                wxQueueEvent(m_sink, e);
+            }
+        }
+    }
+    void PostAudioState(bool running, std::shared_ptr<okcli::AudioCapture> audio, const std::string& message) {
+        AudioStateEvent st;
+        st.running = running;
+        st.audio = std::move(audio);
+        st.message = message;
+        auto* e = NewEvent(AudioState);
+        e->SetPayload(st);
+        wxQueueEvent(m_sink, e);
+    }
+    void PostUserIo(Result r, const UserIoEvent& st) {
+        auto* e = NewEvent(r);
+        e->SetPayload(st);
+        wxQueueEvent(m_sink, e);
+    }
     wxThreadEvent* NewEvent(Result r) const {
         auto* e = new wxThreadEvent;  // wxEVT_THREAD
         e->SetInt(r);
@@ -310,6 +422,7 @@ private:
     wxMessageQueue<Action> m_requests;
     bool m_continuous = false;
     std::string m_serial;
+    std::chrono::steady_clock::time_point m_lastCounters{};
 };
 
 // ============================================================================================
@@ -642,6 +755,24 @@ private:
         m_bGainSlider      = XRCCTRL(*this, "slider_bgain", wxSlider);
         m_bGainVal         = XRCCTRL(*this, "val_bgain", wxStaticText);
 
+        // Board tools (XEM8310 / DARWIN only, shown once such a device is connected): the 64 microphones and the user
+        // LEDs / buttons. Appended at the end of the sidebar column that holds the image settings.
+        {
+            wxWindow* host = m_histChk->GetParent();
+            wxSizer* column = m_histChk->GetContainingSizer();
+            m_boardToolsLine = new wxStaticLine(host);
+            m_audioBtn = new wxButton(host, wxID_ANY, "Microphones...");
+            m_ioBtn = new wxButton(host, wxID_ANY, "User I/O...");
+            auto* row = new wxBoxSizer(wxHORIZONTAL);
+            row->Add(m_audioBtn, 1, wxRIGHT, FromDIP(6));
+            row->Add(m_ioBtn, 1);
+            column->Add(m_boardToolsLine, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            column->Add(row, 0, wxEXPAND | wxALL, FromDIP(16));
+            m_audioBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { showAudioFrame(); });
+            m_ioBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { showUserIoFrame(); });
+            showBoardTools(false);
+        }
+
         // Long device labels must neither clip the controls nor be truncated (a wxChoice can't wrap).
         // Widen the fixed sidebar so the longest possible "board [peripheral]" (and the "Ready: ..."
         // status line) fits in full, measured in the control's own font + the dropdown arrow, padding and
@@ -945,6 +1076,26 @@ private:
             onDeviceProbed(evt.GetPayload<GuiCameraBackend::DeviceEntry>());
             return;
         }
+        // Microphones / user I/O results carry their own payload types: handle them before the device filter.
+        if (r == CameraWorker::AudioState) {
+            const auto st = evt.GetPayload<AudioStateEvent>();
+            if (m_audioFrame) m_audioFrame->OnAudioState(st.running, st.audio, wxString::FromUTF8(st.message));
+            return;
+        }
+        if (r == CameraWorker::AudioCounters) {
+            if (m_audioFrame) m_audioFrame->SetCounters(evt.GetPayload<okcli::MicCounters>());
+            return;
+        }
+        if (r == CameraWorker::UserIoPresence) {
+            const auto st = evt.GetPayload<UserIoEvent>();
+            if (m_ioFrame) m_ioFrame->OnPresence(st.present, wxString::FromUTF8(st.message));
+            return;
+        }
+        if (r == CameraWorker::UserIoState) {
+            const auto st = evt.GetPayload<UserIoEvent>();
+            if (m_ioFrame) m_ioFrame->OnState(st.leds, st.buttons);
+            return;
+        }
         if (r == CameraWorker::SetupGood) {  // not device-filtered
             stopBusy();
             const auto caps = evt.GetPayload<DeviceCaps>();
@@ -953,6 +1104,7 @@ private:
             populateCaptureSize(caps);
             enableImageSettings(!caps.tpgOnly);
             applyExposureUi(caps.mode);
+            showBoardTools(caps.mode == okcli::CameraMode::Imx219 && !caps.tpgOnly);
             enableCameraControls(true);
             // Every successful connect (first plug-in or a reconnect) starts in continuous/video, the
             // default view. An unplug's CaptureFail can leave the toggle off, so drive it on explicitly
@@ -980,6 +1132,38 @@ private:
                 break;
             case CameraWorker::Error: setStatus("Error: " + evt.GetString()); break;
         }
+    }
+
+    void showBoardTools(bool on) {
+        if (m_boardToolsLine) m_boardToolsLine->Show(on);
+        if (m_audioBtn) m_audioBtn->Show(on);
+        if (m_ioBtn) m_ioBtn->Show(on);
+        if (!on) {
+            if (m_audioFrame) m_audioFrame->Hide();
+            if (m_ioFrame) m_ioFrame->Hide();
+        }
+        if (m_sidebar) { m_sidebar->Layout(); m_sidebar->FitInside(); }
+    }
+    // The windows are created on first use and then only hidden/shown: closing the microphone window does not stop the
+    // acquisition or a recording.
+    void showAudioFrame() {
+        if (!m_audioFrame) {
+            m_audioFrame = new AudioFrame(this, {
+                [this]() { if (m_worker) m_worker->RequestAudioStart(); },
+                [this]() { if (m_worker) m_worker->RequestAudioStop(); }});
+        }
+        m_audioFrame->Show();
+        m_audioFrame->Raise();
+    }
+    void showUserIoFrame() {
+        if (!m_ioFrame) {
+            m_ioFrame = new UserIoFrame(this, {
+                [this]() { if (m_worker) m_worker->RequestUserIoProbe(); },
+                [this]() { if (m_worker) m_worker->RequestUserIoPoll(); },
+                [this](uint32_t led, bool on) { if (m_worker) m_worker->RequestSetLed(led, on); }});
+        }
+        m_ioFrame->Show();
+        m_ioFrame->Raise();
     }
 
     void showFrame() {
@@ -1073,6 +1257,11 @@ private:
     wxChoice* m_sizeChoice = nullptr;
     wxChoice* m_imageSizeChoice = nullptr;
     wxCheckBox* m_histChk = nullptr;
+    wxStaticLine* m_boardToolsLine = nullptr;
+    wxButton* m_audioBtn = nullptr;
+    wxButton* m_ioBtn = nullptr;
+    AudioFrame* m_audioFrame = nullptr;     // created on first use; child of this frame (destroyed with it)
+    UserIoFrame* m_ioFrame = nullptr;
     HistogramPanel* m_histPanel = nullptr;
     wxButton* m_fpoipBtn = nullptr;
     wxButton* m_captureBtn = nullptr;

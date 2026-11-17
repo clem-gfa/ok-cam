@@ -120,6 +120,11 @@ if(BUILD_TESTS)
     add_executable(user_io_test tests/user_io_test.cpp)
     target_include_directories(user_io_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME user_io_test COMMAND user_io_test)
+    # AudioPipe.h against a stand-in for the FrontPanel data port (tests/stub/okFrontPanel.h): no SDK needed
+    add_executable(mic_control_test tests/mic_control_test.cpp)
+    target_include_directories(mic_control_test BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/stub" "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(mic_control_test PRIVATE Threads::Threads)
+    add_test(NAME mic_control_test COMMAND mic_control_test)
 endif()
 
 # --- Optional wxWidgets GUI ---------------------------------------------------------

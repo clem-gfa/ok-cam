@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include "Axi.h"
 #include "okFrontPanel.h"
 
@@ -45,8 +47,17 @@ public:
     // accepted for interface parity but a too-short transfer simply throws afterward.
     void read(uint8_t* buffer, std::size_t size, uint32_t timeoutMs) override;
 
+    // Registers a function called between slices of every large transfer. A video frame is read in ONE transfer that
+    // keeps the USB pipe busy for tens of ms; the microphone gateware only buffers a few ms of audio in front of its
+    // DDR4 ring, so the audio is serviced between slices of kStreamSliceBytes. The hook runs on the calling thread and
+    // must not throw. Pass an empty function to read in one piece.
+    void setBetweenChunksHook(std::function<void()> hook) { m_betweenChunks = std::move(hook); }
+
 private:
+    void readSlice(uint8_t* buffer, std::size_t size);
+
     OpalKelly::FPGADataPortClassic* m_dataPort;
+    std::function<void()> m_betweenChunks;
 };
 
 }  // namespace okcli

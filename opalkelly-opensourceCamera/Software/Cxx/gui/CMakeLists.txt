@@ -60,7 +60,7 @@ if(WIN32)
     configure_file(version.rc.in "${CMAKE_CURRENT_BINARY_DIR}/version.rc" @ONLY)
     set(_okcam_rc "${CMAKE_CURRENT_BINARY_DIR}/version.rc")
 endif()
-add_executable(okcameragui WIN32 main_gui.cpp RgbViewport.cpp embedded_assets.cpp ${_okcam_rc})
+add_executable(okcameragui WIN32 main_gui.cpp RgbViewport.cpp AudioFrame.cpp UserIoFrame.cpp embedded_assets.cpp ${_okcam_rc})
 # Customer-facing executable name (the docs + release archives refer to okCameraApp).
 set_target_properties(okcameragui PROPERTIES OUTPUT_NAME okCameraApp)
 
@@ -269,4 +269,16 @@ elseif(OKCAM_BUNDLE_WX)
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/BundleModern.cmake.in"
                    "${CMAKE_CURRENT_BINARY_DIR}/BundleModern.cmake" @ONLY)
     install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/BundleModern.cmake" COMPONENT app)
+endif()
+
+# Smoke test of the microphone / user I/O windows (no SDK, no hardware): draws the waveforms into a memory bitmap and
+# checks the pixels, exercises the simulated user I/O. Needs a display: run under xvfb-run on a headless machine.
+if(BUILD_TESTS)
+    add_executable(gui_smoke_test ../tests/gui_smoke_test.cpp AudioFrame.cpp UserIoFrame.cpp)
+    target_include_directories(gui_smoke_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+    target_link_libraries(gui_smoke_test PRIVATE ${wxWidgets_LIBRARIES} Threads::Threads)
+    find_program(_xvfb xvfb-run)
+    if(_xvfb)
+        add_test(NAME gui_smoke_test COMMAND ${_xvfb} -a $<TARGET_FILE:gui_smoke_test>)
+    endif()
 endif()

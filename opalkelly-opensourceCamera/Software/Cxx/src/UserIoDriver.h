@@ -22,7 +22,29 @@
 
 namespace okcli {
 
-class UserIoDriver {
+// What the UI needs from the user I/O: implemented by the real driver and by SimulatedUserIo.
+class IUserIo {
+public:
+    virtual ~IUserIo() = default;
+    virtual uint32_t leds() = 0;
+    virtual void setLed(uint32_t led, bool on) = 0;
+    virtual uint32_t buttonsPressed() = 0;
+};
+
+// Software stand-in (no hardware access) to try the UI with a bitfile that has no user I/O block.
+class SimulatedUserIo : public IUserIo {
+public:
+    uint32_t leds() override { return m_leds; }
+    void setLed(uint32_t led, bool on) override { m_leds = on ? (m_leds | (led & 3u)) : (m_leds & ~led); }
+    uint32_t buttonsPressed() override { return m_buttons; }
+    // Simulates pressing / releasing a button (UserIoDriver::BUTTON_USER or BUTTON_RESET).
+    void press(uint32_t button, bool down) { m_buttons = down ? (m_buttons | (button & 3u)) : (m_buttons & ~button); }
+
+private:
+    uint32_t m_leds = 0, m_buttons = 0;
+};
+
+class UserIoDriver : public IUserIo {
 public:
     static constexpr uint32_t LED_0         = 1u << 0;
     static constexpr uint32_t LED_1         = 1u << 1;
@@ -42,15 +64,15 @@ public:
     }
 
     // LED bitmask (LED_0 | LED_1): bits set are lit.
-    uint32_t leds() { return m_axi.read32(BASE + GPIO_DATA) & LED_MASK; }
+    uint32_t leds() override { return m_axi.read32(BASE + GPIO_DATA) & LED_MASK; }
     void setLeds(uint32_t mask) { m_axi.write32(BASE + GPIO_DATA, mask & LED_MASK); }
-    void setLed(uint32_t led, bool on) {
+    void setLed(uint32_t led, bool on) override {
         const uint32_t v = leds();
         setLeds(on ? (v | led) : (v & ~led));
     }
 
     // Bitmask of the buttons currently pressed (BUTTON_USER | BUTTON_RESET).
-    uint32_t buttonsPressed() { return (~m_axi.read32(BASE + GPIO2_DATA)) & BUTTON_MASK; }
+    uint32_t buttonsPressed() override { return (~m_axi.read32(BASE + GPIO2_DATA)) & BUTTON_MASK; }
     bool userButtonPressed() { return (buttonsPressed() & BUTTON_USER) != 0; }
     bool resetButtonPressed() { return (buttonsPressed() & BUTTON_RESET) != 0; }
 

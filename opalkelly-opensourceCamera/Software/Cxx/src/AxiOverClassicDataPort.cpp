@@ -9,6 +9,7 @@
 
 #include "AxiOverClassicDataPort.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <thread>
@@ -47,6 +48,7 @@ constexpr int    DEFAULT_SOFTWARE_TIMEOUT_MS = 5000;
 // ---- BlockPipeOut stream -------------------------------------------------------------------
 constexpr int STREAM_PIPE_ADDRESS = 0xa0;
 constexpr int STREAM_BLOCK_SIZE   = 1024;
+constexpr std::size_t kStreamSliceBytes = std::size_t(128) * 1024;   // multiple of the block size
 
 inline int ec(OpalKelly::ErrorCode e) { return static_cast<int>(e); }  // NoError == 0
 
@@ -142,6 +144,18 @@ AxiStreamOverClassicDataPort::AxiStreamOverClassicDataPort(OpalKelly::FPGADataPo
     : m_dataPort(dataPort) {}
 
 void AxiStreamOverClassicDataPort::read(uint8_t* buffer, std::size_t size, uint32_t /*timeoutMs*/) {
+    if (!m_betweenChunks) {
+        readSlice(buffer, size);
+        return;
+    }
+    for (std::size_t offset = 0; offset < size; offset += kStreamSliceBytes) {
+        const std::size_t end = std::min(offset + kStreamSliceBytes, size);
+        readSlice(buffer + offset, end - offset);
+        if (end < size) m_betweenChunks();
+    }
+}
+
+void AxiStreamOverClassicDataPort::readSlice(uint8_t* buffer, std::size_t size) {
     const long got = m_dataPort->ReadFromBlockPipeOut(
         STREAM_PIPE_ADDRESS, STREAM_BLOCK_SIZE, static_cast<long>(size), buffer);
     if (got < 0) {

@@ -26,6 +26,10 @@ namespace okcli {
 struct Transport {
     std::unique_ptr<IAxiLite>   axiLite;
     std::unique_ptr<IAxiStream> axiStream;
+    // Classic path only (null for the Hub): borrowed from the device / owned by `axiStream`. Used by the microphone
+    // support (audio pipe, mic control wires) and to service the audio between slices of the video transfers.
+    OpalKelly::FPGADataPortClassic*  classicPort   = nullptr;
+    AxiStreamOverClassicDataPort*    classicStream = nullptr;
 };
 
 // Build the transport for an already-open, already-configured device. `isGen3` selects the
@@ -44,7 +48,10 @@ inline Transport makeTransport(OpalKelly::FrontPanel& fp, bool isGen3) {
         if (static_cast<int>(fp.GetFPGADataPortClassic(port)) != 0 || port == nullptr)
             throw AxiError("GetFPGADataPortClassic failed");
         t.axiLite   = std::make_unique<AxiLiteOverClassicDataPort>(port);
-        t.axiStream = std::make_unique<AxiStreamOverClassicDataPort>(port);
+        auto stream = std::make_unique<AxiStreamOverClassicDataPort>(port);
+        t.classicPort   = port;
+        t.classicStream = stream.get();
+        t.axiStream     = std::move(stream);
     }
     return t;
 }

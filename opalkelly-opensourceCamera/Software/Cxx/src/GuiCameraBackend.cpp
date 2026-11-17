@@ -510,6 +510,11 @@ MatrixDimensions GuiCameraBackend::frameDimensions() const {
 }
 
 void GuiCameraBackend::close() {
+    // Microphones first: stop the recording and disable them while the device is still reachable (best effort).
+    try { audioStop(); } catch (...) {}
+    m_audio.reset();
+    m_audioPipe.reset();
+    m_userIo.reset();
     // Destroy in reverse dependency order: sequencer/control/drivers borrow the transport, which
     // borrows the device's data ports.
     m_seq.reset();
@@ -636,6 +641,114 @@ void GuiCameraBackend::gbrToRgb(const CapturedFrame& in, Frame& out) {
         out.rgb[i * 3 + 1] = in.image[i * 3 + 0];  // G
         out.rgb[i * 3 + 2] = in.image[i * 3 + 1];  // B
     }
+}
+
+}  // namespace okcli
+
+// ---- Microphones / user I/O ---------------------------------------------------------------------------------------
+
+namespace okcli {
+
+bool GuiCameraBackend::audioSupported() const {
+    return m_fp && m_info.isClassic && m_info.mode == CameraMode::Imx219 && m_transport.classicPort != nullptr;
+}
+
+bool GuiCameraBackend::audioPresent(std::string& err) {
+    if (!audioSupported()) { err = "no microphones on this device"; return false; }
+    try {
+        return micPresent(m_transport.classicPort);
+    } catch (const std::exception& e) {
+        err = e.what();
+        return false;
+    }
+}
+
+bool GuiCameraBackend::audioStart(std::string& err) {
+    if (!audioSupported()) { err = "no microphones on this device"; return false; }
+    if (m_audioRunning) return true;
+    try {
+        if (!micPresent(m_transport.classicPort)) {
+            err = "the loaded bitfile has no microphone subsystem (build the gateware with 'set with_mics 1')";
+            return false;
+        }
+        if (!m_audioPipe) m_audioPipe.reset(new AudioPipeOverClassicDataPort(m_transport.classicPort));
+        if (!m_audio) {
+            AudioCaptureOptions opt;
+            opt.keepRaw = false;     // the display uses the per-block peaks only
+            opt.catchUp = true;      // behind and not recording: show the newest audio instead of a growing delay
+            opt.segmentSeconds = 60;
+            m_audio = std::make_shared<AudioCapture>(*m_audioPipe, opt);
+        }
+        micSetEnabled(m_transport.classicPort, true);
+        bool up = false;
+        for (int i = 0; i < 30 && !up; i++) {           // the clock sequence takes ~35 ms
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            up = (micStatus(m_transport.classicPort) & kMicStatusRun) != 0;
+        }
+        if (!up) {
+            micSetEnabled(m_transport.classicPort, false);
+            err = "the microphones did not reach the running state (check VIO3 = 1.8 V)";
+            return false;
+        }
+        m_audio->reset();
+        { std::lock_guard<std::mutex> l(m_audioErrMx); m_audioErr.clear(); }
+        // Between slices of every large video transfer, service the audio FIFO (never throws).
+        m_transport.classicStream->setBetweenChunksHook([this]() {
+            try {
+                m_audio->pump();
+            } catch (const std::exception& e) {
+                std::lock_guard<std::mutex> l(m_audioErrMx);
+                m_audioErr = e.what();
+            }
+        });
+        m_audioRunning = true;
+        return true;
+    } catch (const std::exception& e) {
+        err = e.what();
+        return false;
+    }
+}
+
+void GuiCameraBackend::audioStop() {
+    if (!m_audioRunning) return;
+    m_audioRunning = false;
+    if (m_transport.classicStream) m_transport.classicStream->setBetweenChunksHook(nullptr);
+    if (m_audio) m_audio->stopRecording();      // closes the segment (waits for the pending writes)
+    if (m_transport.classicPort) micSetEnabled(m_transport.classicPort, false);   // only after nothing reads the pipe
+}
+
+bool GuiCameraBackend::audioPump(std::string& err) {
+    if (!m_audioRunning) return true;
+    try {
+        if (m_audio->pump() == 0) m_audio->pumpBlocking();
+        return true;
+    } catch (const std::exception& e) {
+        err = e.what();
+        try { audioStop(); } catch (...) {}
+        return false;
+    }
+}
+
+bool GuiCameraBackend::audioCounters(MicCounters& out, std::string& err) {
+    if (!audioSupported()) { err = "no microphones on this device"; return false; }
+    try {
+        out = micCounters(m_transport.classicPort);
+        return true;
+    } catch (const std::exception& e) {
+        err = e.what();
+        return false;
+    }
+}
+
+std::string GuiCameraBackend::audioError() const {
+    std::lock_guard<std::mutex> l(m_audioErrMx);
+    return m_audioErr;
+}
+
+UserIoDriver* GuiCameraBackend::userIo() {
+    if (!m_transport.axiLite || !m_info.isClassic || m_info.mode != CameraMode::Imx219) return nullptr;
+    if (!m_userIo) m_userIo.reset(new UserIoDriver(*m_transport.axiLite));
+    return m_userIo.get();
 }
 
 }  // namespace okcli

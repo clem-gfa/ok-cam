@@ -53,6 +53,19 @@ int main() {
     bus.present = false;
     assert(!io.isPresent());
 
+    // simulated backend (used by the UI when the bitfile has no user I/O block)
+    SimulatedUserIo sim;
+    assert(sim.leds() == 0);
+    sim.setLed(UserIoDriver::LED_1, true);
+    assert(sim.leds() == UserIoDriver::LED_1);
+    sim.setLed(UserIoDriver::LED_1, false);
+    assert(sim.leds() == 0);
+    sim.press(UserIoDriver::BUTTON_USER, true);
+    assert(sim.buttonsPressed() == UserIoDriver::BUTTON_USER);
+    sim.press(UserIoDriver::BUTTON_RESET, true);
+    sim.press(UserIoDriver::BUTTON_USER, false);
+    assert(sim.buttonsPressed() == UserIoDriver::BUTTON_RESET);
+
     std::cout << "TOUS LES TESTS OK\n";
     return 0;
 }

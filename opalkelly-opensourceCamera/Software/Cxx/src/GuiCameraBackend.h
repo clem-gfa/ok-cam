@@ -14,12 +14,16 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "okFrontPanel.h"
 
+#include "AudioPipe.h"
+#include "AudioStream.h"
 #include "CameraConfig.h"
 #include "CameraTypes.h"
 #include "CapturePipelineSequencer.h"
@@ -27,6 +31,7 @@
 #include "IISP.h"
 #include "TPGDriver.h"
 #include "Transport.h"
+#include "UserIoDriver.h"
 
 namespace okcli {
 
@@ -124,6 +129,28 @@ public:
     void setLuaPath(const std::string& path) { m_luaPath = path; }
     bool isScripted() const { return m_scripted; }
 
+    // ---- Microphones (64 PDM) and board user I/O (XEM8310 / DARWIN) -----------------------------------------------
+    // All calls below except audio() / audioRunning() / audioError() must be made from the thread that owns the device
+    // (the GUI's camera worker), like every other call of this class.
+    //
+    // Audio is serviced from that same thread: (a) between slices of every large video transfer (the gateware only
+    // buffers a few ms of audio in front of its DDR4 ring) and (b) by audioPump(), which the worker loop calls when no
+    // video transfer is running.
+    bool audioSupported() const;                       // XEM8310 (classic device, IMX219 configuration)
+    bool audioPresent(std::string& err);               // the loaded bitfile contains the microphone subsystem
+    bool audioStart(std::string& err);                 // resets + enables the microphones, waits for them to run
+    void audioStop();                                  // stops a recording, disables the microphones
+    bool audioRunning() const { return m_audioRunning; }
+    // One service step: read what is waiting, else wait for one packet. False (+ err) on a failure: audio stops.
+    bool audioPump(std::string& err);
+    bool audioCounters(MicCounters& out, std::string& err);
+    // Thread-safe object for the GUI: statistics, waveform peaks, recording start/stop (nullptr until audioStart()).
+    // The GUI keeps its own reference: statistics, peaks and recording never touch the device, so they stay valid (and
+    // harmless) after the device is closed.
+    std::shared_ptr<AudioCapture> audio() { return m_audio; }
+    std::string audioError() const;                    // last error raised while servicing audio between video slices
+    UserIoDriver* userIo();                            // LEDs + buttons; nullptr if the device has none
+
     void close();
 
     bool isOpen() const { return static_cast<bool>(m_fp); }
@@ -157,6 +184,14 @@ private:
     std::unique_ptr<CapturePipelineSequencer> m_seq;
     DeviceEntry m_info;
     bool m_started = false;
+
+    // Microphones / user I/O (created on first use)
+    std::unique_ptr<AudioPipeOverClassicDataPort> m_audioPipe;
+    std::shared_ptr<AudioCapture> m_audio;             // shared with the GUI; declared after the pipe it references
+    std::atomic<bool> m_audioRunning{false};
+    mutable std::mutex m_audioErrMx;
+    std::string m_audioErr;
+    std::unique_ptr<UserIoDriver> m_userIo;
 
     std::string m_luaPath;                  // camera_axi.lua (server-side scripted path); "" = off
     std::unique_ptr<OpalKelly::ScriptEngine> m_engine;  // reset on close (borrows m_fp)
