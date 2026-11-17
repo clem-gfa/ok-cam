@@ -21,6 +21,7 @@
 
 #include <wx/wx.h>
 #include <wx/bmpbndl.h>
+#include <wx/config.h>
 #include <wx/dcbuffer.h>
 #include <wx/filename.h>
 #include <wx/msgqueue.h>
@@ -792,6 +793,21 @@ private:
             m_recVideoInfo = new wxStaticText(host, wxID_ANY, "");
             m_recVideoBtn->Enable(false);
             column->Add(m_recVideoLine, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            {
+                auto* row = new wxBoxSizer(wxHORIZONTAL);
+                row->Add(new wxStaticText(host, wxID_ANY, "File name prefix"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, FromDIP(8));
+                m_recPrefix = new wxTextCtrl(host, wxID_ANY, wxString::FromUTF8(m_recSettings->prefix));
+                m_recPrefix->SetToolTip("Recordings are named <prefix>_<date>_<time>_video.* / _NNN.wav");
+                row->Add(m_recPrefix, 1);
+                column->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+                m_recPrefix->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
+                    m_recSettings->setPrefix(m_recPrefix->GetValue().ToStdString(wxConvUTF8));
+                });
+                m_recSettings->listeners.push_back([this]() {
+                    const wxString v = wxString::FromUTF8(m_recSettings->prefix);
+                    if (m_recPrefix->GetValue() != v) m_recPrefix->ChangeValue(v);
+                });
+            }
             column->Add(m_recVideoBtn, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
             column->Add(m_recVideoInfo, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
             m_recVideoBtn->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) { toggleVideoRecording(e.IsChecked()); });
@@ -1177,17 +1193,22 @@ private:
     void toggleVideoRecording(bool on) {
         if (!m_worker) { m_recVideoBtn->SetValue(false); return; }
         if (!on) { stopVideoRecording(); return; }
-        wxDirDialog dlg(this, "Folder for the recordings", m_recDir.IsEmpty() ? wxGetHomeDir() : m_recDir);
+        wxDirDialog dlg(this, "Folder for the recordings", m_recSettings->dir.empty() ? wxGetHomeDir() : wxString::FromUTF8(m_recSettings->dir));
         if (dlg.ShowModal() != wxID_OK) { m_recVideoBtn->SetValue(false); return; }
         m_recDir = dlg.GetPath();
-        char session[64];
-        const std::time_t t = std::time(nullptr);
-        std::strftime(session, sizeof session, "okcam_%Y%m%d_%H%M%S", std::localtime(&t));
+        m_recSettings->setDir(m_recDir.ToStdString(wxConvUTF8));
+        // Prefix chosen by the user (sanitized for file names); the field shows what will really be used
+        const std::string session = okcli::recordingSession(m_recSettings->prefix, false, std::time(nullptr));
+        {
+            wxConfig cfg("okcam-gui");
+            cfg.Write("rec/prefix", wxString::FromUTF8(m_recSettings->prefix));
+            cfg.Write("rec/dir", m_recDir);
+        }
         okcli::VideoRecorderOptions opt;
         if (const char* c = std::getenv("OKCAM_VIDEO_CODEC")) opt.codec = c;     // auto | h264 | mjpeg | ffv1 | raw
         std::string why;
-        if (!m_worker->Video().start(m_recDir.ToStdString(), session, opt, why) ||
-            !okcli::videoDiskSpaceOk(m_recDir.ToStdString(), m_worker->Video().codec(), why)) {
+        if (!m_worker->Video().start(m_recSettings->dir, session, opt, why) ||
+            !okcli::videoDiskSpaceOk(m_recSettings->dir, m_worker->Video().codec(), why)) {
             m_worker->Video().stop();
             m_recVideoBtn->SetValue(false);
             m_recVideoInfo->SetLabel(wxString::FromUTF8(why));
@@ -1198,7 +1219,7 @@ private:
         wxString audioNote;
         if (m_audioFrame && m_audioFrame->IsRunning() && !m_audioFrame->IsRecording()) {
             std::string awhy;
-            if (m_audioFrame->StartRecordingWith(m_recDir.ToStdString(), session, awhy)) audioNote = " + audio";
+            if (m_audioFrame->StartRecordingWith(m_recSettings->dir, session, awhy)) audioNote = " + audio";
             else audioNote = " (audio not recorded: " + wxString::FromUTF8(awhy) + ")";
         }
         m_recVideoNote = audioNote;
@@ -1251,7 +1272,7 @@ private:
         if (!m_audioFrame) {
             m_audioFrame = new AudioFrame(this, {
                 [this]() { if (m_worker) m_worker->RequestAudioStart(); },
-                [this]() { if (m_worker) m_worker->RequestAudioStop(); }});
+                [this]() { if (m_worker) m_worker->RequestAudioStop(); }}, m_recSettings);
         }
         m_audioFrame->Show();
         m_audioFrame->Raise();
@@ -1364,6 +1385,15 @@ private:
     wxStaticText* m_recVideoInfo = nullptr;
     wxTimer* m_recTimer = nullptr;
     wxString m_recDir, m_recVideoNote;
+    // prefix + folder of the recordings, shared with the microphone window; restored from wxConfig
+    std::shared_ptr<okcli::RecordingSettings> m_recSettings = [] {
+        auto r = std::make_shared<okcli::RecordingSettings>();
+        wxConfig cfg("okcam-gui");
+        r->prefix = cfg.Read("rec/prefix", "okcam").ToStdString(wxConvUTF8);
+        r->dir = cfg.Read("rec/dir", "").ToStdString(wxConvUTF8);
+        return r;
+    }();
+    wxTextCtrl* m_recPrefix = nullptr;
     wxStaticLine* m_boardToolsLine = nullptr;
     wxButton* m_audioBtn = nullptr;
     wxButton* m_ioBtn = nullptr;

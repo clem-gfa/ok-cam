@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "RecordingName.h"
 #include <wx/wx.h>
 
 #include "AudioStream.h"
@@ -49,7 +50,8 @@ public:
         std::function<void()> start;    // ask the camera worker to reset + enable the microphones
         std::function<void()> stop;     // ask the camera worker to stop a recording and disable them
     };
-    AudioFrame(wxWindow* parent, Actions actions);
+    // `rec`: prefix + folder of the recordings, shared with the main window (a private one is created when null)
+    AudioFrame(wxWindow* parent, Actions actions, std::shared_ptr<okcli::RecordingSettings> rec = nullptr);
 
     // Worker -> GUI results (call from the main thread, e.g. from the wxThreadEvent handler)
     void OnAudioState(bool running, std::shared_ptr<okcli::AudioCapture> audio, const wxString& message);
@@ -81,7 +83,8 @@ private:
     std::shared_ptr<okcli::AudioCapture> m_audio;
     bool m_running = false;
     bool m_starting = false;
-    std::string m_recDir;
+    std::shared_ptr<okcli::RecordingSettings> m_rec;
+    wxTextCtrl* m_prefix = nullptr;
     okcli::MicCounters m_counters;
     bool m_haveCounters = false;
 

@@ -137,3 +137,11 @@ Bouton « Record video... » dans la colonne de reglages (toute camera ; ecrit d
 - `src/VideoRecorder.h` : les images lues par le thread camera sont copiees dans une file (jamais d'attente : une file pleine -> images **abandonnees et comptees**), un thread dedie les ecrit. H.264 (libx264, ultrafast, CRF 20, `.mp4`) via **ffmpeg** s'il est installe (`ffmpeg` dans le PATH ou variable `OKCAM_FFMPEG`) ; sinon MJPEG, ou **brut** (`.rgb24`, ~190 Mo/s en 1080p30 : disques rapides seulement). `OKCAM_VIDEO_CODEC` = auto | h264 | mjpeg | ffv1 | raw. Un changement de resolution ouvre un nouveau fichier (`_p01`).
 - `<session>_video.csv` : une ligne par image (`frame, host_ms, audio_ts, sof_count, sof_ts, audio_seq`) avec l'horloge FPGA connue du cote audio au moment de la lecture, et `<session>_video_info.txt` (format, encodeur, frequence de l'horloge FPGA). **Limite** : le materiel ne dit pas de quel debut de trame vient une image donnee ; `sof_count` donne l'ordre des debuts de trame, et le decalage constant entre une image et son debut de trame (quelques images de latence) se calibre une fois avec un evenement visible ET audible (un clap devant la camera). Une etiquette de trame dans le flux video (gateware) supprimerait cette etape.
 - Teste hors materiel (`tests/video_recorder_test.cpp`, propre sous ThreadSanitizer) : H.264 relu par `ffprobe` (60 images, 320x240), flux brut octet pour octet, CSV, changement de resolution, encodeur lent (100 appels en moins de 1 ms, images abandonnees), panne d'ecriture, repli sans ffmpeg.
+
+### Préfixe des noms de fichiers (application C++)
+
+Le champ « File name prefix » (colonne de réglages) et « File prefix » (fenêtre Microphones) sont synchronisés et
+mémorisés (wxConfig `okcam-gui`, avec le dernier dossier). Noms produits :
+`<préfixe>_<AAAAMMJJ>_<HHMMSS>_video.*` (+ `_NNN.wav/.csv` pour l'audio enregistré en même temps) et
+`<préfixe>_audio_<AAAAMMJJ>_<HHMMSS>_NNN.wav` pour l'audio seul. Le préfixe est nettoyé : espaces → `_`, caractères
+interdits (`/ \ : * ? " < > |`) supprimés, 64 octets max, vide → `okcam`.

@@ -83,10 +83,10 @@ void AudioWaveCanvas::DrawTo(wxDC& dc, const wxSize& size) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-AudioFrame::AudioFrame(wxWindow* parent, Actions actions)
+AudioFrame::AudioFrame(wxWindow* parent, Actions actions, std::shared_ptr<okcli::RecordingSettings> rec)
     : wxFrame(parent, wxID_ANY, "Microphones (64 channels)", wxDefaultPosition, wxDefaultSize,
               wxDEFAULT_FRAME_STYLE | wxFRAME_FLOAT_ON_PARENT),
-      m_actions(std::move(actions)), m_timer(this) {
+      m_actions(std::move(actions)), m_rec(rec ? std::move(rec) : std::make_shared<okcli::RecordingSettings>()), m_timer(this) {
     auto* root = new wxPanel(this);
     auto* col = new wxBoxSizer(wxVERTICAL);
 
@@ -95,7 +95,11 @@ AudioFrame::AudioFrame(wxWindow* parent, Actions actions)
     m_recBtn = new wxButton(root, wxID_ANY, "Record");
     m_recBtn->Enable(false);
     bar->Add(m_startBtn, 0, wxRIGHT, 6);
-    bar->Add(m_recBtn, 0, wxRIGHT, 12);
+    bar->Add(m_recBtn, 0, wxRIGHT, 6);
+    bar->Add(new wxStaticText(root, wxID_ANY, "File prefix"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, 4);
+    m_prefix = new wxTextCtrl(root, wxID_ANY, wxString::FromUTF8(m_rec->prefix), wxDefaultPosition, wxSize(110, -1));
+    m_prefix->SetToolTip("Start of the recording file names: <prefix>_audio_<date>_<time>_NNN.wav");
+    bar->Add(m_prefix, 0, wxRIGHT, 12);
     bar->Add(new wxStaticText(root, wxID_ANY, "Window"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, 4);
     m_window = new wxChoice(root, wxID_ANY);
     for (const char* s : {"5 ms", "20 ms", "100 ms"}) m_window->Append(s);
@@ -130,6 +134,11 @@ AudioFrame::AudioFrame(wxWindow* parent, Actions actions)
 
     m_startBtn->Bind(wxEVT_BUTTON, &AudioFrame::OnStartStop, this);
     m_recBtn->Bind(wxEVT_BUTTON, &AudioFrame::OnRecord, this);
+    m_prefix->Bind(wxEVT_TEXT, [this](wxCommandEvent&) { m_rec->setPrefix(m_prefix->GetValue().ToStdString(wxConvUTF8)); });
+    m_rec->listeners.push_back([this]() {
+        const wxString v = wxString::FromUTF8(m_rec->prefix);
+        if (m_prefix->GetValue() != v) m_prefix->ChangeValue(v);
+    });
     for (wxChoice* c : {m_window, m_gain, m_layout}) c->Bind(wxEVT_CHOICE, &AudioFrame::OnSettings, this);
     Bind(wxEVT_TIMER, &AudioFrame::OnTimer, this);
     Bind(wxEVT_SHOW, &AudioFrame::OnShow, this);
@@ -192,14 +201,12 @@ void AudioFrame::OnRecord(wxCommandEvent&) {
         StopRecording();
         return;
     }
-    wxDirDialog dlg(this, "Folder for the audio recordings", m_recDir.empty() ? wxGetHomeDir() : wxString::FromUTF8(m_recDir));
+    wxDirDialog dlg(this, "Folder for the audio recordings", m_rec->dir.empty() ? wxGetHomeDir() : wxString::FromUTF8(m_rec->dir));
     if (dlg.ShowModal() != wxID_OK) return;
-    m_recDir = dlg.GetPath().ToStdString();
-    char session[64];
-    const std::time_t t = std::time(nullptr);
-    std::strftime(session, sizeof session, "okcam_audio_%Y%m%d_%H%M%S", std::localtime(&t));
+    m_rec->setDir(dlg.GetPath().ToStdString(wxConvUTF8));
+    const std::string session = okcli::recordingSession(m_rec->prefix, true, std::time(nullptr));
     std::string why;
-    if (!StartRecordingWith(m_recDir, session, why)) m_msg->SetLabel(wxString::FromUTF8(why));
+    if (!StartRecordingWith(m_rec->dir, session, why)) m_msg->SetLabel(wxString::FromUTF8(why));
 }
 
 void AudioFrame::OnAudioState(bool running, std::shared_ptr<AudioCapture> audio, const wxString& message) {
