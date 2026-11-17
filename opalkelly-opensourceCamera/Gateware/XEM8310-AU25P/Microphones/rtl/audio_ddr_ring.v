@@ -106,7 +106,11 @@ module audio_ddr_ring #(
     reg [RING_AW:0]   wr_done, rd_done;     // paquets termines (compteurs, un bit de plus que l'indice)
     wire [RING_AW:0]  used = wr_done - rd_done;
     assign used_pkts = {{(15 - RING_AW){1'b0}}, used};
-    assign space_ok  = (used + 2) < RING_PKTS;
+    // space_ok traverse ensuite un domaine d'horloge (synchroniseur 2 bascules dans mic_subsystem) : il sort donc d'une
+    // BASCULE, pas d'une expression combinatoire des compteurs (qui pourrait produire des aleas capturables).
+    reg space_ok_q;
+    always @(posedge clk) space_ok_q <= aresetn && ((used + 2) < RING_PKTS);
+    assign space_ok  = space_ok_q;
 
     // ---- ecriture --------------------------------------------------------------------------------
     localparam W_IDLE = 2'd0, W_AW = 2'd1, W_DATA = 2'd2, W_RESP = 2'd3;
