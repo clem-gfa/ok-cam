@@ -23,6 +23,7 @@ export const AUDIO_PIPE_ADDRESS = 0xa1;
 export const AUDIO_BLOCK_SIZE = 1024; // must equal BLOCK_WORDS * 4 in the gateware (256 words)
 export const AUDIO_TICKS_PER_FRAME = 528; // 22 clk per PDM period x 24 (decimation)
 export const AUDIO_TICK_HZ = 99.96e6;
+export const AUDIO_CATCHUP_RING_PACKETS = 200; // ~22 ms of backlog in the DDR4 ring: the live display skips ahead
 export const AUDIO_PEAK_BLOCK = 8; // frames per min/max block kept for the display
 
 export interface AudioPacketInfo {
@@ -58,6 +59,10 @@ export function parseAudioPacket(p: Uint8Array): AudioPacketInfo | null {
 export interface IAudioPipe {
     /** Number of 32-bit words currently waiting in the gateware FIFO (WireOut 0x23). */
     available(): Promise<number>;
+    /** Packets held in the gateware DDR4 ring after the last available() (undefined without the ring). */
+    readonly ringUsed?: number;
+    /** Maximum of ringUsed since the last reset; 0 until the first packet has been written to the ring. */
+    readonly ringPeak?: number;
     /** Fills `buffer` completely (a multiple of AUDIO_PACKET_BYTES) or throws. */
     read(buffer: Uint8Array): Promise<void>;
 }
@@ -246,8 +251,15 @@ export class AudioRecorder {
         await this._pipe.read(chunk);
         const t1 = performance.now();
         this._stats.readMs += t1 - t0;
-        // The gateware FIFO is nearly full: the PC is behind. Without a recording, only the newest packet is decoded.
-        const behind = this._catchUp && !this._rec && words >= (this._maxPackets - 4) * (AUDIO_PACKET_BYTES / 4);
+        // The PC is behind: with the DDR4 ring, a backlog of several dozen ms is queued in it (the gateware FIFO in front of it
+        // is always full then, which says nothing); without the ring, a nearly full FIFO means the same. Without a recording,
+        // only the newest packet of each read is decoded so that the live display shows the present.
+        const peak = this._pipe.ringPeak;
+        const behindNow =
+            peak !== undefined && peak > 0
+                ? (this._pipe.ringUsed ?? 0) >= AUDIO_CATCHUP_RING_PACKETS
+                : words >= (this._maxPackets - 4) * (AUDIO_PACKET_BYTES / 4);
+        const behind = this._catchUp && !this._rec && behindNow;
         for (let i = 0; i < packets; i++) {
             const pkt = chunk.subarray(i * AUDIO_PACKET_BYTES, (i + 1) * AUDIO_PACKET_BYTES);
             if (behind && i < packets - 1) this.skipPacket(pkt);

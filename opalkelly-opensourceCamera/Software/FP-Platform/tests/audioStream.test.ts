@@ -195,6 +195,32 @@ async function main() {
         assert.ok(r3.recentPeaks(0, 8, pk, new Int32Array(8)) > 0);
     }
 
+
+    // catch-up with the DDR4 ring: the FIFO being full says nothing, only the ring backlog counts
+    {
+        class RingPipe extends FakePipe {
+            ringUsed = 0;
+            ringPeak = 1;
+        }
+        const mk = (used: number) => {
+            const rp = new RingPipe();
+            rp.ringUsed = used;
+            for (let q = 0; q < 40; q++) rp.queue.push(makePacket(q, 0, false));
+            return rp;
+        };
+        const idle = new AudioRecorder(mk(5), { ringFrames: 2000, catchUp: true, keepRaw: false });
+        while ((await idle.pump()) > 0) {
+            /* drain */
+        }
+        assert.strictEqual(idle.stats.skippedPackets, 0, "no ring backlog: nothing skipped even with a full FIFO");
+        assert.strictEqual(idle.stats.packets, 40);
+        const behindRec = new AudioRecorder(mk(500), { ringFrames: 2000, catchUp: true, keepRaw: false });
+        while ((await behindRec.pump()) > 0) {
+            /* drain */
+        }
+        assert.ok(behindRec.stats.skippedPackets > 0, "large ring backlog: packets skipped");
+    }
+
     // independent reader: ffprobe if installed
     try {
         const out = execFileSync(

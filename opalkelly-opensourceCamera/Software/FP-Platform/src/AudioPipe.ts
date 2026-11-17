@@ -28,8 +28,15 @@ export class AudioPipeOverClassicDataPort implements IAudioPipe {
         this._dataPort = dataPort;
     }
 
+    /** DDR4 ring occupancy read together with the FIFO level (same USB transaction). */
+    ringUsed = 0;
+    ringPeak = 0;
+
     async available(): Promise<number> {
         await this._dataPort.updateWireOuts();
+        const ring = this._dataPort.getWireOutValue(MIC_WO_RING) >>> 0;
+        this.ringUsed = ring & 0xffff;
+        this.ringPeak = (ring >>> 16) & 0xffff;
         return this._dataPort.getWireOutValue(MIC_WO_LEVEL) >>> 0;
     }
 
