@@ -13,8 +13,8 @@ import React from "react";
 import { IFPGADataPortClassic, WorkQueue } from "@opalkelly/frontpanel-platform-api";
 
 import { AxiStreamOverClassicDataPort } from "./AxiOverClassicDataPort";
-import { AUDIO_CHANNELS, AudioRecorder, AudioStats } from "./AudioStream";
-import { AudioPipeOverClassicDataPort, MIC_STATUS_RUN, micPresent, micSetEnabled, micStatus } from "./AudioPipe";
+import { AUDIO_CHANNELS, AUDIO_PEAK_BLOCK, AudioRecorder, AudioStats } from "./AudioStream";
+import { AudioPipeOverClassicDataPort, MIC_STATUS_RUN, MicCounters, micCounters, micPresent, micSetEnabled, micStatus } from "./AudioPipe";
 import { OpfsExporter, opfsSinkFactory } from "./OpfsStorage";
 
 const COLS = 8;
@@ -38,6 +38,7 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
     const [windowMs, setWindowMs] = React.useState(20);
     const [gain, setGain] = React.useState(8);
     const [stats, setStats] = React.useState<AudioStats | null>(null);
+    const [fpga, setFpga] = React.useState<MicCounters | null>(null);
     const [message, setMessage] = React.useState("");
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
     const recorderRef = React.useRef<AudioRecorder | null>(null);
@@ -132,14 +133,19 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
         };
     }, [stream]);
 
-    // Drawing + statistics while running
+    // Drawing + statistics while running. Drawing is deliberately cheap (it reads the per-block min/max kept by
+    // AudioRecorder, ~1 ms per image): the gateware FIFO only holds ~3.6 ms of audio, so a long main-thread task
+    // here would make the microphone stream lose packets.
     React.useEffect(() => {
         if (!running || !open) return;
         let raf = 0;
         let last = 0;
+        let lastFpga = 0;
+        const bufMin = new Int32Array(8192);
+        const bufMax = new Int32Array(8192);
         const draw = (now: number) => {
             raf = requestAnimationFrame(draw);
-            if (now - last < 33) return;
+            if (now - last < 50) return; // 20 images/s
             last = now;
             const canvas = canvasRef.current;
             const rec = recorderRef.current;
@@ -147,28 +153,29 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
             const ctx = canvas.getContext("2d");
             if (!ctx) return;
             const { windowMs: wms, gain: g } = settingsRef.current;
-            const n = Math.round((wms / 1000) * rec.sampleRate);
+            const blocks = Math.min(bufMin.length, Math.max(1, Math.round(((wms / 1000) * rec.sampleRate) / AUDIO_PEAK_BLOCK)));
             ctx.fillStyle = "#101418";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             const k = ((CELL_H / 2 - 2) * g) / FULL_SCALE;
+            const cols = CELL_W - 2;
             for (let ch = 0; ch < AUDIO_CHANNELS; ch++) {
                 const x0 = (ch % COLS) * CELL_W;
                 const y0 = Math.floor(ch / COLS) * CELL_H;
                 const mid = y0 + CELL_H / 2;
                 ctx.strokeStyle = "#2a323a";
                 ctx.strokeRect(x0 + 0.5, y0 + 0.5, CELL_W - 1, CELL_H - 1);
-                const s = rec.recent(ch, n);
-                if (s.length === 0) continue;
+                const n = rec.recentPeaks(ch, blocks, bufMin, bufMax);
+                if (n === 0) continue;
                 ctx.strokeStyle = "#5ad1a0";
                 ctx.beginPath();
-                for (let px = 0; px < CELL_W - 2; px++) {
-                    const i0 = Math.floor((px * s.length) / (CELL_W - 2));
-                    const i1 = Math.max(i0 + 1, Math.floor(((px + 1) * s.length) / (CELL_W - 2)));
-                    let mn = s[i0];
-                    let mx = mn;
-                    for (let i = i0 + 1; i < i1 && i < s.length; i++) {
-                        if (s[i] < mn) mn = s[i];
-                        if (s[i] > mx) mx = s[i];
+                for (let px = 0; px < cols; px++) {
+                    const i0 = Math.floor((px * n) / cols);
+                    const i1 = Math.max(i0 + 1, Math.floor(((px + 1) * n) / cols));
+                    let mn = bufMin[i0];
+                    let mx = bufMax[i0];
+                    for (let i = i0 + 1; i < i1 && i < n; i++) {
+                        if (bufMin[i] < mn) mn = bufMin[i];
+                        if (bufMax[i] > mx) mx = bufMax[i];
                     }
                     const yTop = Math.max(y0 + 1, mid - mx * k);
                     const yBot = Math.min(y0 + CELL_H - 1, mid - mn * k);
@@ -181,10 +188,14 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                 ctx.fillText(String(ch + 1), x0 + 3, y0 + 10);
             }
             setStats(rec.stats);
+            if (now - lastFpga > 1000) {
+                lastFpga = now;
+                void workQueue.post(async () => setFpga(await micCounters(dataPort))).catch(() => undefined);
+            }
         };
         raf = requestAnimationFrame(draw);
         return () => cancelAnimationFrame(raf);
-    }, [running, open]);
+    }, [running, open, dataPort, workQueue]);
 
     const buttonStyle: React.CSSProperties = { padding: "4px 8px", marginRight: 6 };
     return (
@@ -252,6 +263,12 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                                     {recording || stats.segments > 0
                                         ? ` | rec ${(stats.recordedFrames / (recorderRef.current?.sampleRate ?? 1)).toFixed(1)} s, ${stats.segments} segment(s) exported`
                                         : ""}
+                                </div>
+                            )}
+                            {fpga && (
+                                <div style={{ marginTop: 2, color: "#9aa5b1" }}>
+                                    FPGA: dropped {fpga.dropped} | overruns {fpga.overruns} | FIFO {Math.round((fpga.level / 32768) * 100)}% |
+                                    {(fpga.status & 0x8) !== 0 ? " FIFO was full" : " FIFO never full"}
                                 </div>
                             )}
                         </>

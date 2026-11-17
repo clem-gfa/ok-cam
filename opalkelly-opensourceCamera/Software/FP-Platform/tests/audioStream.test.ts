@@ -8,6 +8,7 @@ import { execFileSync } from "child_process";
 import {
     AUDIO_FRAME_BYTES,
     AUDIO_MAGIC,
+    AUDIO_PEAK_BLOCK,
     AUDIO_PACKET_BYTES,
     AudioFileSink,
     AudioRecorder,
@@ -143,6 +144,35 @@ async function main() {
     assert.strictEqual(recent.length, 100);
     assert.strictEqual(recent[99], sampleValue(TOTAL * NS - 1, 5));
     assert.strictEqual(recent[0], sampleValue(TOTAL * NS - 100, 5));
+
+
+    // display peaks: must equal the min/max of the raw samples of each block of AUDIO_PEAK_BLOCK frames
+    {
+        const blocksWanted = 40;
+        const pmin = new Int32Array(blocksWanted);
+        const pmax = new Int32Array(blocksWanted);
+        for (const ch of [0, 5, 63]) {
+            const n = rec.recentPeaks(ch, blocksWanted, pmin, pmax);
+            assert.strictEqual(n, blocksWanted);
+            // blocks are aligned on the received frame count; the last (partial) block is not published yet
+            const tail = st.frames % AUDIO_PEAK_BLOCK;
+            const raw = rec.recent(ch, blocksWanted * AUDIO_PEAK_BLOCK + tail);
+            for (let b = 0; b < n; b++) {
+                const slice = raw.subarray(b * AUDIO_PEAK_BLOCK, (b + 1) * AUDIO_PEAK_BLOCK);
+                assert.strictEqual(pmin[b], Math.min(...slice), `peak min ch ${ch} block ${b}`);
+                assert.strictEqual(pmax[b], Math.max(...slice), `peak max ch ${ch} block ${b}`);
+            }
+        }
+    }
+
+    // pumpBlocking: waits for exactly one packet
+    {
+        const p2 = new FakePipe();
+        const r2 = new AudioRecorder(p2, { ringFrames: 1000 });
+        p2.queue.push(makePacket(0, 0, false));
+        assert.strictEqual(await r2.pumpBlocking(), 1);
+        assert.strictEqual(r2.stats.packets, 1);
+    }
 
     // independent reader: ffprobe if installed
     try {

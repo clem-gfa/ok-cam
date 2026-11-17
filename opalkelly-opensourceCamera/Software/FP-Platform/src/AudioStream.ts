@@ -23,6 +23,7 @@ export const AUDIO_PIPE_ADDRESS = 0xa1;
 export const AUDIO_BLOCK_SIZE = 1024; // must equal BLOCK_WORDS * 4 in the gateware (256 words)
 export const AUDIO_TICKS_PER_FRAME = 528; // 22 clk per PDM period x 24 (decimation)
 export const AUDIO_TICK_HZ = 99.96e6;
+export const AUDIO_PEAK_BLOCK = 8; // frames per min/max block kept for the display
 
 export interface AudioPacketInfo {
     seq: number;
@@ -144,6 +145,16 @@ export class AudioRecorder {
     private readonly _ring: Int32Array; // interleaved frames, 64 values each
     private _ringHead = 0;
     private _ringFill = 0;
+    // Per-channel min/max of blocks of AUDIO_PEAK_BLOCK frames: the display reads these instead of the raw
+    // samples, so drawing costs ~100x less main-thread time (the gateware FIFO only holds ~3.6 ms of audio).
+    private readonly _peakBlocks: number;
+    private readonly _peakMin: Int32Array;
+    private readonly _peakMax: Int32Array;
+    private _peakHead = 0;
+    private _peakFill = 0;
+    private _accCount = 0;
+    private readonly _accMin = new Int32Array(AUDIO_CHANNELS);
+    private readonly _accMax = new Int32Array(AUDIO_CHANNELS);
     private readonly _segmentFrames: number;
     private readonly _maxPackets: number;
     private readonly _runOnDevice: (task: () => Promise<void>) => Promise<void>;
@@ -164,8 +175,11 @@ export class AudioRecorder {
         this._sampleRate = Math.round(tickHz / AUDIO_TICKS_PER_FRAME);
         this._ringFrames = options.ringFrames ?? 65536;
         this._ring = new Int32Array(this._ringFrames * AUDIO_CHANNELS);
+        this._peakBlocks = Math.floor(this._ringFrames / AUDIO_PEAK_BLOCK);
+        this._peakMin = new Int32Array(this._peakBlocks * AUDIO_CHANNELS);
+        this._peakMax = new Int32Array(this._peakBlocks * AUDIO_CHANNELS);
         this._segmentFrames = Math.max(1, Math.round((options.segmentSeconds ?? 60) * this._sampleRate));
-        this._maxPackets = options.maxPacketsPerRead ?? 16;
+        this._maxPackets = options.maxPacketsPerRead ?? 32; // the gateware FIFO holds 32 packets
         this._runOnDevice = options.runOnDevice ?? ((task) => task());
         this._onSegmentClosed = options.onSegmentClosed;
         this._buffer = new Uint8Array(AUDIO_PACKET_BYTES * this._maxPackets);
@@ -206,8 +220,8 @@ export class AudioRecorder {
         return packets;
     }
 
-    /** Starts a timer-driven pump on the device queue (used when no video transfer is running). */
-    start(intervalMs = 2): void {
+    /** Starts the pump loop on the device queue (it also runs between slices of video transfers). */
+    start(): void {
         if (this._loopRunning) return;
         this._loopRunning = true;
         this._stopRequested = false;
@@ -216,11 +230,9 @@ export class AudioRecorder {
         void (async () => {
             try {
                 while (!this._stopRequested) {
-                    let got = 0;
                     await this._runOnDevice(async () => {
-                        got = await this.pump();
+                        if ((await this.pump()) === 0) await this.pumpBlocking();
                     });
-                    if (got === 0) await new Promise((r) => setTimeout(r, intervalMs));
                 }
             } catch (e) {
                 this._error = e instanceof Error ? e.message : String(e);
@@ -258,6 +270,37 @@ export class AudioRecorder {
         return out;
     }
 
+    /**
+     * Min/max of the last up-to-`maxBlocks` blocks (AUDIO_PEAK_BLOCK frames each) of one channel, oldest first,
+     * written into the caller's arrays (no allocation). Returns the number of blocks written.
+     */
+    recentPeaks(channel: number, maxBlocks: number, outMin: Int32Array, outMax: Int32Array): number {
+        const n = Math.min(maxBlocks, this._peakFill, outMin.length, outMax.length);
+        const start = (this._peakHead + this._peakBlocks - n) % this._peakBlocks;
+        for (let i = 0; i < n; i++) {
+            const o = ((start + i) % this._peakBlocks) * AUDIO_CHANNELS + channel;
+            outMin[i] = this._peakMin[o];
+            outMax[i] = this._peakMax[o];
+        }
+        return n;
+    }
+
+    get peakBlocks(): number {
+        return this._peakBlocks;
+    }
+
+    /**
+     * Waits for ONE packet (a blocking read, ~0.11 ms at the nominal rate) and processes it. Used instead of
+     * a timer when the FIFO is empty: a JS timer has a >= 4 ms latency, longer than the ~3.6 ms the gateware
+     * FIFO can hold. The microphones must stay enabled while this runs.
+     */
+    async pumpBlocking(): Promise<number> {
+        const one = this._buffer.subarray(0, AUDIO_PACKET_BYTES);
+        await this._pipe.read(one);
+        await this.handle(one);
+        return 1;
+    }
+
     // ---- internals -----------------------------------------------------------------------------
 
     private async handle(p: Uint8Array): Promise<void> {
@@ -285,6 +328,7 @@ export class AudioRecorder {
             }
             this._ringHead = (this._ringHead + 1) % this._ringFrames;
             if (this._ringFill < this._ringFrames) this._ringFill++;
+            this.accumulatePeaks(base);
         }
 
         if (this._rec) await this.record(h, lostFrames);
@@ -292,6 +336,22 @@ export class AudioRecorder {
         this._stats.packets++;
         this._stats.frames += h.nsamp;
         this._stats.lastSeq = h.seq;
+    }
+
+    private accumulatePeaks(base: number): void {
+        const first = this._accCount === 0;
+        for (let c = 0; c < AUDIO_CHANNELS; c++) {
+            const v = this._ring[base + c];
+            if (first || v < this._accMin[c]) this._accMin[c] = v;
+            if (first || v > this._accMax[c]) this._accMax[c] = v;
+        }
+        if (++this._accCount < AUDIO_PEAK_BLOCK) return;
+        const o = this._peakHead * AUDIO_CHANNELS;
+        this._peakMin.set(this._accMin, o);
+        this._peakMax.set(this._accMax, o);
+        this._peakHead = (this._peakHead + 1) % this._peakBlocks;
+        if (this._peakFill < this._peakBlocks) this._peakFill++;
+        this._accCount = 0;
     }
 
     private async record(h: AudioPacketInfo, lostFrames: number): Promise<void> {

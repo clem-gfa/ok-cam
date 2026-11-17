@@ -33,7 +33,16 @@ export class AudioPipeOverClassicDataPort implements IAudioPipe {
     }
 
     async read(buffer: Uint8Array): Promise<void> {
-        const got = await this._dataPort.readFromBlockPipeOut(AUDIO_PIPE_ADDRESS, AUDIO_BLOCK_SIZE, buffer);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("audio pipe read timed out (are the microphones running?)")), 2000);
+        });
+        let got: number;
+        try {
+            got = await Promise.race([this._dataPort.readFromBlockPipeOut(AUDIO_PIPE_ADDRESS, AUDIO_BLOCK_SIZE, buffer), timeout]);
+        } finally {
+            clearTimeout(timer);
+        }
         if (got !== buffer.byteLength) throw new Error(`audio short read: ${got} of ${buffer.byteLength} bytes`);
     }
 }
@@ -58,4 +67,21 @@ export async function micSetEnabled(dataPort: IFPGADataPortClassic, enable: bool
     await dataPort.updateWireIns();
     dataPort.setWireInValue(MIC_WI_CONTROL, enable ? ((sampleDelay & 0xff) << 8) | 0x1 : 0x0, 0xffffffff);
     await dataPort.updateWireIns();
+}
+
+export interface MicCounters {
+    status: number;
+    dropped: number; // packets the gateware dropped because its FIFO was full (the PC did not read fast enough)
+    overruns: number;
+    level: number; // words waiting in the audio FIFO (32768 = full)
+}
+
+export async function micCounters(dataPort: IFPGADataPortClassic): Promise<MicCounters> {
+    await dataPort.updateWireOuts();
+    return {
+        status: dataPort.getWireOutValue(MIC_WO_STATUS) >>> 0,
+        dropped: dataPort.getWireOutValue(MIC_WO_DROPPED) >>> 0,
+        overruns: dataPort.getWireOutValue(MIC_WO_OVERRUNS) >>> 0,
+        level: dataPort.getWireOutValue(MIC_WO_LEVEL) >>> 0,
+    };
 }
