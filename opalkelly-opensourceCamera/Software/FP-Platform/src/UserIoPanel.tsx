@@ -21,12 +21,13 @@ import { BUTTON_RESET, BUTTON_USER, IUserIo, LED_0, LED_1, SimulatedUserIo, User
 interface UserIoPanelProps {
     axiLite: IAxiLite;
     workQueue: WorkQueue;
+    /** Shown (the panel stays mounted while hidden). */
+    visible: boolean;
 }
 
 type Mode = "checking" | "hardware" | "absent" | "simulated";
 
-const UserIoPanel: React.FC<UserIoPanelProps> = ({ axiLite, workQueue }) => {
-    const [open, setOpen] = React.useState(false);
+const UserIoPanel: React.FC<UserIoPanelProps> = ({ axiLite, workQueue, visible }) => {
     const [mode, setMode] = React.useState<Mode>("checking");
     const [leds, setLeds] = React.useState(0);
     const [buttons, setButtons] = React.useState(0);
@@ -54,15 +55,15 @@ const UserIoPanel: React.FC<UserIoPanelProps> = ({ axiLite, workQueue }) => {
     }, [hardware, workQueue]);
 
     React.useEffect(() => {
-        if (open && !checked.current) {
+        if (visible && !checked.current) {
             checked.current = true;
             void checkPresence();
         }
-    }, [open, checkPresence]);
+    }, [visible, checkPresence]);
 
     // Poll the buttons / LEDs (4 Hz) while the panel is open and a backend is available
     React.useEffect(() => {
-        if (!open || !io) return;
+        if (!visible || !io) return;
         let cancelled = false;
         let failures = 0;
         const read = async () => {
@@ -95,7 +96,7 @@ const UserIoPanel: React.FC<UserIoPanelProps> = ({ axiLite, workQueue }) => {
             cancelled = true;
             clearInterval(timer);
         };
-    }, [open, io, mode, workQueue]);
+    }, [visible, io, mode, workQueue]);
 
     const toggleLed = async (led: number) => {
         if (!io) return;
@@ -125,30 +126,8 @@ const UserIoPanel: React.FC<UserIoPanelProps> = ({ axiLite, workQueue }) => {
     });
 
     return (
-        <>
-            <button
-                onClick={() => setOpen(!open)}
-                style={{ position: "fixed", left: 190, bottom: 8, zIndex: 100, padding: "4px 8px" }}
-            >
-                I/O
-            </button>
-            {open && (
-                <div
-                    style={{
-                        position: "fixed",
-                        left: 8,
-                        bottom: 44,
-                        zIndex: 100,
-                        background: "rgba(16,20,24,0.94)",
-                        color: "#ddd",
-                        font: "12px monospace",
-                        padding: 8,
-                    }}
-                >
-                    <div style={{ marginBottom: 6 }}>
-                        <b>Board user I/O</b>
-                        {mode === "simulated" && <span style={{ color: "#ffb86b" }}> (simulated, no hardware access)</span>}
-                    </div>
+                <div style={{ color: "#ddd", font: "12px monospace", minWidth: 240 }}>
+                    {mode === "simulated" && <div style={{ marginBottom: 6, color: "#ffb86b" }}>Simulated, no hardware access</div>}
                     {mode === "checking" && <div>Checking the bitfile...</div>}
                     {mode === "absent" && (
                         <div>
@@ -201,8 +180,6 @@ const UserIoPanel: React.FC<UserIoPanelProps> = ({ axiLite, workQueue }) => {
                     )}
                     {message && <div style={{ color: "#ffb86b", marginTop: 4 }}>{message}</div>}
                 </div>
-            )}
-        </>
     );
 };
 

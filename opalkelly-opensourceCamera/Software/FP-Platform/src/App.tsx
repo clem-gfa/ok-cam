@@ -28,10 +28,12 @@ import "./App.css";
 
 import FrontPanelLogo from "../assets/images/logo512.png";
 
-import CameraView, { CameraProductModel } from "./CameraView";
+import CameraView, { CameraProductModel, ExtraPanel } from "./CameraView";
 import FileWriteProbe from "./FileWriteProbe";
 import AudioPanel from "./AudioPanel";
 import UserIoPanel from "./UserIoPanel";
+import MicrophoneIcon from "./Icons/MicrophoneIcon";
+import UserIoIcon from "./Icons/UserIoIcon";
 import { CameraMode } from "./CameraTypes";
 
 import { IISP } from "./IISP";
@@ -431,6 +433,30 @@ function App() {
     }
 
     if (cameraSystem !== undefined) {
+        // Floating panels opened from the sidebar (XEM8310 / IMX219 board only)
+        const extraPanels: ExtraPanel[] = [];
+        if (cameraSystem.mode === "imx219" && cameraSystem.classicDataPort && cameraSystem.classicStream) {
+            const { classicDataPort, classicStream } = cameraSystem;
+            extraPanels.push({
+                id: "audio",
+                title: "Microphones (64 channels)",
+                icon: <MicrophoneIcon color="#FFFFFF" />,
+                defaultPosition: { x: 40, y: 20 },
+                content: (visible) => (
+                    <AudioPanel dataPort={classicDataPort} stream={classicStream} workQueue={DeviceWorkQueue} visible={visible} />
+                ),
+            });
+        }
+        if (cameraSystem.mode === "imx219" && cameraSystem.axiLite) {
+            const { axiLite } = cameraSystem;
+            extraPanels.push({
+                id: "userio",
+                title: "Board user I/O",
+                icon: <UserIoIcon color="#FFFFFF" />,
+                defaultPosition: { x: 60, y: 60 },
+                content: (visible) => <UserIoPanel axiLite={axiLite} workQueue={DeviceWorkQueue} visible={visible} />,
+            });
+        }
         return (
             <div className="App">
                 <CameraView
@@ -441,18 +467,9 @@ function App() {
                     cameraControl={cameraSystem.control}
                     workQueue={DeviceWorkQueue}
                     cameraMode={cameraSystem.mode}
+                    extraPanels={extraPanels}
                 />
                 <FileWriteProbe />
-                {cameraSystem.mode === "imx219" && cameraSystem.axiLite && (
-                    <UserIoPanel axiLite={cameraSystem.axiLite} workQueue={DeviceWorkQueue} />
-                )}
-                {cameraSystem.mode === "imx219" && cameraSystem.classicDataPort && cameraSystem.classicStream && (
-                    <AudioPanel
-                        dataPort={cameraSystem.classicDataPort}
-                        stream={cameraSystem.classicStream}
-                        workQueue={DeviceWorkQueue}
-                    />
-                )}
             </div>
         );
     } else {

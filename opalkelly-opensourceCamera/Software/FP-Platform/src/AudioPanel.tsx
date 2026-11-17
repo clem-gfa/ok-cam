@@ -23,12 +23,13 @@ interface AudioPanelProps {
     dataPort: IFPGADataPortClassic;
     stream: AxiStreamOverClassicDataPort;
     workQueue: WorkQueue;
+    /** Shown (the panel stays mounted while hidden, so the acquisition keeps running). */
+    visible: boolean;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) => {
-    const [open, setOpen] = React.useState(false);
+const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue, visible }) => {
     const [present, setPresent] = React.useState<boolean | null>(null);
     const [running, setRunning] = React.useState(false);
     const [recording, setRecording] = React.useState(false);
@@ -38,7 +39,7 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
     const [fpga, setFpga] = React.useState<MicCounters | null>(null);
     const [message, setMessage] = React.useState("");
     const [layout, setLayout] = React.useState<"8x8" | "16x4">("8x8");
-    const [maximized, setMaximized] = React.useState(false);
+    const [large, setLarge] = React.useState(false);
     const [size, setSize] = React.useState({ w: 640, h: 448 }); // drawing area (CSS pixels)
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
     const areaRef = React.useRef<HTMLDivElement>(null);
@@ -62,13 +63,13 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
 
     // Is the microphone subsystem in the loaded bitfile?
     React.useEffect(() => {
-        if (!open || present !== null) return;
+        if (!visible || present !== null) return;
         void workQueue
             .post(async () => {
                 setPresent(await micPresent(dataPort));
             })
             .catch((e) => setMessage(String(e)));
-    }, [open, present, dataPort, workQueue]);
+    }, [visible, present, dataPort, workQueue]);
 
     const start = async () => {
         const rec = getRecorder();
@@ -129,14 +130,14 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
     // The drawing area follows the panel size (drag the bottom-right corner, or use Maximize)
     React.useEffect(() => {
         const el = areaRef.current;
-        if (!el || !open || typeof ResizeObserver === "undefined") return;
+        if (!el || !visible || typeof ResizeObserver === "undefined") return;
         const ro = new ResizeObserver((entries) => {
             const r = entries[0].contentRect;
             if (r.width > 100 && r.height > 100) setSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
         });
         ro.observe(el);
         return () => ro.disconnect();
-    }, [open, present, maximized]);
+    }, [visible, present, large]);
 
     // Release the hardware when the panel goes away
     React.useEffect(() => {
@@ -150,7 +151,7 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
     // AudioRecorder, ~1 ms per image): the gateware FIFO only holds ~3.6 ms of audio, so a long main-thread task
     // here would make the microphone stream lose packets.
     React.useEffect(() => {
-        if (!running || !open) return;
+        if (!running || !visible) return;
         let raf = 0;
         let last = 0;
         let lastFpga = 0;
@@ -218,40 +219,31 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
         };
         raf = requestAnimationFrame(draw);
         return () => cancelAnimationFrame(raf);
-    }, [running, open, dataPort, workQueue]);
+    }, [running, visible, dataPort, workQueue]);
 
     const buttonStyle: React.CSSProperties = { padding: "4px 8px", marginRight: 6 };
+    // The panel lives in a draggable frame (CameraView). Drag the bottom-right corner to resize, or use Large.
+    const width = large ? Math.max(700, Math.min(window.innerWidth - 160, 1500)) : 640;
+    const height = large ? Math.max(480, Math.min(window.innerHeight - 180, 900)) : 520;
     return (
-        <>
-            <button
-                onClick={() => setOpen(!open)}
-                style={{ position: "fixed", left: 130, bottom: 8, zIndex: 100, padding: "4px 8px" }}
-            >
-                Audio
-            </button>
-            {open && (
                 <div
                     style={{
-                        position: "fixed",
-                        zIndex: 100,
-                        background: "rgba(16,20,24,0.94)",
                         color: "#ddd",
                         font: "12px monospace",
-                        padding: 8,
                         boxSizing: "border-box",
                         display: "flex",
                         flexDirection: "column",
                         overflow: "hidden",
-                        // drag the bottom-right corner to resize, or use Maximize
-                        ...(maximized
-                            ? { left: 8, top: 48, right: 8, bottom: 52 }
-                            : { left: 8, top: 48, width: 676, height: 580, resize: "both", minWidth: 420, minHeight: 320 }),
+                        resize: "both",
+                        width,
+                        height,
+                        minWidth: 420,
+                        minHeight: 300,
                     }}
                 >
                     <div style={{ marginBottom: 6 }}>
-                        <b>Microphones (64 channels)</b>
-                        <button style={{ float: "right" }} onClick={() => setMaximized(!maximized)}>
-                            {maximized ? "Restore" : "Maximize"}
+                        <button style={{ float: "right" }} onClick={() => setLarge(!large)}>
+                            {large ? "Normal size" : "Large"}
                         </button>
                     </div>
                     {present === false && (
@@ -318,8 +310,6 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                     )}
                     {message && <div style={{ color: "#ffb86b", marginTop: 4 }}>{message}</div>}
                 </div>
-            )}
-        </>
     );
 };
 

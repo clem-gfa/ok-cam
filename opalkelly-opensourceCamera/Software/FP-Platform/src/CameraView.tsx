@@ -62,6 +62,19 @@ export enum CameraProductModel {
 }
 
 /**
+ * An additional floating panel opened from a button of the sidebar (e.g. the microphone and user I/O panels).
+ * The panel stays mounted while hidden, so whatever it runs (an acquisition...) is not stopped by closing it.
+ */
+export interface ExtraPanel {
+    id: string;
+    title: string;
+    icon: React.ReactNode;
+    defaultPosition?: { x: number; y: number };
+    /** Content of the panel; `visible` tells whether it is currently shown. */
+    content: (visible: boolean) => React.ReactNode;
+}
+
+/**
  * Properties for the camera view component.
  */
 interface CameraViewProps {
@@ -73,6 +86,8 @@ interface CameraViewProps {
     workQueue: WorkQueue;
     /** Attached camera, so the exposure control can present itself correctly. */
     cameraMode: CameraMode;
+    /** Optional extra floating panels, each with its own sidebar button. */
+    extraPanels?: ExtraPanel[];
 }
 
 /**
@@ -120,6 +135,8 @@ interface CameraViewState {
     imageScaleMode: ImageScale;
 
     topPanelId?: string;
+
+    openExtraPanels: Record<string, boolean>;
 }
 
 const TEST_MODE_LABELS: Partial<Record<TestMode, string>> = {
@@ -214,6 +231,7 @@ class CameraView extends Component<CameraViewProps, CameraViewState> {
             continuousFrameCaptureState: true,
             objectDetectionState: ObjectDetectionState.Initializing,
             showDetectionSpinner: false,
+            openExtraPanels: {},
 
             imageScaleMode: initialImageScaleMode.value
         };
@@ -343,6 +361,23 @@ class CameraView extends Component<CameraViewProps, CameraViewState> {
                                 <SingleCaptureIcon color="#FFFFFF"/>
                         </button>
                     </div>
+                    {(this.props.extraPanels?.length ?? 0) > 0 && (
+                        <div className="okMenuPanel">
+                            {this.props.extraPanels!.map((panel) => (
+                                <Toggle.Root
+                                    key={panel.id}
+                                    className="okToggleButton"
+                                    title={panel.title}
+                                    pressed={!!this.state.openExtraPanels[panel.id]}
+                                    onPressedChange={(pressed) =>
+                                        this.setState((s) => ({ openExtraPanels: { ...s.openExtraPanels, [panel.id]: pressed } }))
+                                    }
+                                >
+                                    {panel.icon}
+                                </Toggle.Root>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 <div
                     className="okMainPanel"
@@ -366,6 +401,25 @@ class CameraView extends Component<CameraViewProps, CameraViewState> {
                         onObjectDetectionStateChange={this.onObjectDetectionStateChanged}
                         onFirstInferenceComplete={this.onFirstInferenceComplete}
                     />
+                    {this.props.extraPanels?.map((panel) => {
+                        const visible = !!this.state.openExtraPanels[panel.id];
+                        const panelId = `extra-${panel.id}`;
+                        return (
+                            // Always mounted (hidden when closed) so that e.g. a running audio acquisition survives closing the panel
+                            <div key={panel.id} style={{ display: visible ? "block" : "none" }}>
+                                <DraggablePanel
+                                    title={panel.title}
+                                    panelId={panelId}
+                                    container={this._mainViewRef.current}
+                                    defaultPosition={panel.defaultPosition ?? { x: 20, y: 20 }}
+                                    zIndex={(this.state.topPanelId === panelId) ? this._topPanelZIndex : this._panelZIndex}
+                                    onActive={() => this.setState({ topPanelId: panelId })}
+                                >
+                                    {panel.content(visible)}
+                                </DraggablePanel>
+                            </div>
+                        );
+                    })}
                     {this.state.showCaptureStatus && (
                         <div
                             style={{
