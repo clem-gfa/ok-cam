@@ -419,10 +419,10 @@ private:
                 if (sink) {
                     std::string err;
                     if (sink->write(it.data.data(), bytes, err)) {
-                        csv << frameNo << ',' << it.hostMs << ',' << (it.sync.valid ? std::to_string(it.sync.audioTs) : "")
-                            << ',' << (it.sync.valid ? std::to_string(it.sync.sofCount) : "") << ','
-                            << (it.sync.valid ? std::to_string(it.sync.sofTs) : "") << ','
-                            << (it.sync.valid ? std::to_string(it.sync.audioSeq) : "") << ',' << part << '\n';
+                        csv << frameNo << ',' << it.hostMs << ',';
+                        if (it.sync.valid) csv << it.sync.audioTs << ',' << it.sync.sofCount << ',' << it.sync.sofTs << ',' << it.sync.audioSeq;
+                        else csv << ",,,";                                // no audio timebase: empty columns
+                        csv << ',' << part << '\n';
                         frameNo++;
                         std::lock_guard<std::mutex> l(m_mx);
                         m_stats.framesWritten++;

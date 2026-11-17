@@ -411,7 +411,8 @@ private:
         int segment = 0;
         std::shared_ptr<Segment> current;
         std::atomic<std::size_t> queuedBytes{0};
-        std::string failed;               // written/read under m_mx only (see failRecording / recFailed)
+        std::string failed;               // the reason; written/read under m_mx only
+        std::atomic<bool> hasFailed{false};   // lock-free mirror of !failed.empty() for the per-packet checks
     };
     using RecPtr = std::shared_ptr<Recording>;
     using SegPtr = std::shared_ptr<Segment>;
@@ -420,12 +421,10 @@ private:
         std::lock_guard<std::mutex> l(m_mx);
         if (!rec.failed.empty()) return;
         rec.failed = why;
+        rec.hasFailed.store(true);
         m_recordError = why;
     }
-    bool recFailed(const Recording& rec) const {
-        std::lock_guard<std::mutex> l(m_mx);
-        return !rec.failed.empty();
-    }
+    static bool recFailed(const Recording& rec) { return rec.hasFailed.load(); }
 
     // Lock order: m_recMx, then m_mx (never the other way round).
     void record(const AudioPacketInfo& h, uint64_t lostFrames) {
@@ -587,16 +586,28 @@ private:
         AudioPacketInfo h;
         std::lock_guard<std::mutex> l(m_mx);
         if (!parseAudioPacket(p, h)) { m_stats.badBlocks++; return; }
-        if (m_expectSeq && h.seq != m_nextSeq) m_stats.lostPackets += uint32_t(h.seq - m_nextSeq);
+        trackPacketLocked(h);
+        m_stats.skippedPackets++;
+    }
+
+    // Sequence / loss / timebase bookkeeping shared by skipPacket() and handle(). m_mx held. Returns the number of
+    // sample frames lost before this packet (from the gap in `seq`, modulo 2^32).
+    uint64_t trackPacketLocked(const AudioPacketInfo& h) {
+        uint64_t lostFrames = 0;
+        if (m_expectSeq && h.seq != m_nextSeq) {
+            const uint32_t gap = h.seq - m_nextSeq;
+            m_stats.lostPackets += gap;
+            lostFrames = uint64_t(gap) * h.nsamp;
+        }
         m_expectSeq = true;
         m_nextSeq = h.seq + 1;
         m_stats.packets++;
         m_stats.frames += h.nsamp;
-        m_stats.skippedPackets++;
         m_stats.lastSeq = h.seq;
         m_stats.lastTs = h.ts;
         m_stats.lastVideoFrames = h.videoFrames;
         m_stats.lastVideoTs = h.videoTs;
+        return lostFrames;
     }
 
     void handle(const uint8_t* p) {
@@ -605,20 +616,8 @@ private:
         {
             std::lock_guard<std::mutex> l(m_mx);
             if (!parseAudioPacket(p, h)) { m_stats.badBlocks++; return; }
-            if (m_expectSeq && h.seq != m_nextSeq) {
-                const uint32_t gap = h.seq - m_nextSeq;   // modulo 2^32
-                m_stats.lostPackets += gap;
-                lostFrames = uint64_t(gap) * h.nsamp;
-            }
-            m_expectSeq = true;
-            m_nextSeq = h.seq + 1;
+            lostFrames = trackPacketLocked(h);
             decodeLocked(h);
-            m_stats.packets++;
-            m_stats.frames += h.nsamp;
-            m_stats.lastSeq = h.seq;
-            m_stats.lastTs = h.ts;
-            m_stats.lastVideoFrames = h.videoFrames;
-            m_stats.lastVideoTs = h.videoTs;
         }
         record(h, lostFrames);
     }
@@ -628,16 +627,21 @@ private:
         const uint8_t* pay = h.payload;
         for (uint32_t i = 0; i < h.nsamp; i++) {
             const uint8_t* f = pay + std::size_t(i) * kAudioFrameBytes;
-            const bool first = (m_accCount == 0);
-            int32_t* ringRow = m_opt.keepRaw ? &m_ring[m_ringHead * kAudioChannels] : nullptr;
+            int32_t v[kAudioChannels];                       // sign-extended 24-bit samples of this frame
             for (int c = 0; c < kAudioChannels; c++) {
                 const uint8_t* s = f + c * 3;
-                int32_t v = int32_t(uint32_t(s[0]) | uint32_t(s[1]) << 8 | uint32_t(s[2]) << 16);
-                v = (v << 8) >> 8;
-                if (ringRow) ringRow[c] = v;
-                if (first || v < m_accMin[c]) m_accMin[c] = v;
-                if (first || v > m_accMax[c]) m_accMax[c] = v;
+                v[c] = (int32_t(uint32_t(s[0]) | uint32_t(s[1]) << 8 | uint32_t(s[2]) << 16) << 8) >> 8;
             }
+            if (m_accCount == 0) {                           // first frame of a block: start the min/max from it
+                std::memcpy(m_accMin, v, sizeof v);
+                std::memcpy(m_accMax, v, sizeof v);
+            } else {
+                for (int c = 0; c < kAudioChannels; c++) {
+                    m_accMin[c] = std::min(m_accMin[c], v[c]);
+                    m_accMax[c] = std::max(m_accMax[c], v[c]);
+                }
+            }
+            if (m_opt.keepRaw) std::memcpy(&m_ring[m_ringHead * kAudioChannels], v, sizeof v);
             if (m_opt.keepRaw) {
                 m_ringHead = (m_ringHead + 1) % m_opt.ringFrames;
                 if (m_ringFill < m_opt.ringFrames) m_ringFill++;

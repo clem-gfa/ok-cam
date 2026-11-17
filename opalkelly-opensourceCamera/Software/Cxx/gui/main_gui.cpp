@@ -533,6 +533,24 @@ wxBitmap       EmbeddedBitmap(const wxString& name);
 wxBitmapBundle EmbeddedSVG(const wxString& name, const wxSize& size);
 wxIcon         EmbeddedIcon(const wxString& name);
 
+// Recording settings kept between runs (wxConfig "okcam-gui"): file prefix, last folder, ffmpeg location.
+namespace recprefs {
+inline std::string read(const char* key, const char* def = "") {
+    wxConfig cfg("okcam-gui");
+    return cfg.Read(key, def).ToStdString(wxConvUTF8);
+}
+inline void write(const char* key, const std::string& v) {
+    wxConfig cfg("okcam-gui");
+    cfg.Write(key, wxString::FromUTF8(v));
+}
+inline std::shared_ptr<okcli::RecordingSettings> load() {
+    auto r = std::make_shared<okcli::RecordingSettings>();
+    r->prefix = read("rec/prefix", "okcam");
+    r->dir = read("rec/dir");
+    return r;
+}
+}  // namespace recprefs
+
 class CameraFrame : public wxFrame {
 public:
     // false if the UI resources failed to load; OnInit then skips Show() instead of presenting a
@@ -1195,20 +1213,13 @@ private:
         if (!on) { stopVideoRecording(); return; }
         wxDirDialog dlg(this, "Folder for the recordings", m_recSettings->dir.empty() ? wxGetHomeDir() : wxString::FromUTF8(m_recSettings->dir));
         if (dlg.ShowModal() != wxID_OK) { m_recVideoBtn->SetValue(false); return; }
-        m_recDir = dlg.GetPath();
-        m_recSettings->setDir(m_recDir.ToStdString(wxConvUTF8));
+        m_recSettings->setDir(dlg.GetPath().ToStdString(wxConvUTF8));
         // Prefix chosen by the user (sanitized for file names); the field shows what will really be used
         const std::string session = okcli::recordingSession(m_recSettings->prefix, false, std::time(nullptr));
-        {
-            wxConfig cfg("okcam-gui");
-            cfg.Write("rec/prefix", wxString::FromUTF8(m_recSettings->prefix));
-            cfg.Write("rec/dir", m_recDir);
-        }
+        recprefs::write("rec/prefix", m_recSettings->prefix);
+        recprefs::write("rec/dir", m_recSettings->dir);
         okcli::VideoRecorderOptions opt;
-        {   // ffmpeg chosen earlier by the user (saved), else PATH / usual install folders
-            wxConfig cfg("okcam-gui");
-            opt.ffmpegPath = cfg.Read("rec/ffmpeg", "").ToStdString(wxConvUTF8);
-        }
+        opt.ffmpegPath = recprefs::read("rec/ffmpeg");     // chosen earlier by the user; empty: PATH / usual install folders
         if (const char* c = std::getenv("OKCAM_VIDEO_CODEC")) opt.codec = c;     // auto | h264 | mjpeg | ffv1 | raw
         std::string why;
         bool started = m_worker->Video().start(m_recSettings->dir, session, opt, why);
@@ -1219,7 +1230,7 @@ private:
             if (fd.ShowModal() == wxID_OK) {
                 opt.ffmpegPath = fd.GetPath().ToStdString(wxConvUTF8);
                 started = m_worker->Video().start(m_recSettings->dir, session, opt, why);
-                if (started) { wxConfig cfg("okcam-gui"); cfg.Write("rec/ffmpeg", fd.GetPath()); }
+                if (started) recprefs::write("rec/ffmpeg", opt.ffmpegPath);
             }
         }
         if (!started ||
@@ -1399,15 +1410,9 @@ private:
     wxToggleButton* m_recVideoBtn = nullptr;
     wxStaticText* m_recVideoInfo = nullptr;
     wxTimer* m_recTimer = nullptr;
-    wxString m_recDir, m_recVideoNote;
+    wxString m_recVideoNote;
     // prefix + folder of the recordings, shared with the microphone window; restored from wxConfig
-    std::shared_ptr<okcli::RecordingSettings> m_recSettings = [] {
-        auto r = std::make_shared<okcli::RecordingSettings>();
-        wxConfig cfg("okcam-gui");
-        r->prefix = cfg.Read("rec/prefix", "okcam").ToStdString(wxConvUTF8);
-        r->dir = cfg.Read("rec/dir", "").ToStdString(wxConvUTF8);
-        return r;
-    }();
+    std::shared_ptr<okcli::RecordingSettings> m_recSettings = recprefs::load();
     wxTextCtrl* m_recPrefix = nullptr;
     wxStaticLine* m_boardToolsLine = nullptr;
     wxButton* m_audioBtn = nullptr;
