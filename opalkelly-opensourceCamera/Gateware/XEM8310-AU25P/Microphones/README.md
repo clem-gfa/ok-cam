@@ -103,3 +103,15 @@ Repliement : tons a 125 et 140 kHz attenues d'environ 73 dB une fois replies. La
 
 ### Pertes de paquets (premiere mesure sur carte)
 Premiere mesure : 18 % de paquets perdus avec un dessin lourd, puis 7,9 % apres allegement du dessin ; le compteur FPGA `dropped` (~30 900) est presque egal aux paquets perdus cote appli (~31 300) : ce sont des **debordements du FIFO du FPGA** (3,6 ms de marge), pas des erreurs de transport. Le panneau affiche maintenant le plus long intervalle entre deux services de l'audio (`host gap max`) et le nombre d'intervalles de plus de 3 ms. Remede materiel : FIFO plus profond (`set mic_fifo_aw 16` ou `17` avant `source project.tcl`, 256 Kio ~7 ms / 512 Kio ~14 ms, a verifier cote BRAM) ; remede logiciel : moins de travail sur le thread principal de la page pendant l'acquisition.
+
+### Tampon en anneau en DDR4 (`USE_DDR = 1`, defaut de `add_mics.tcl`)
+Mesure sur carte avec FIFO de 256 Kio (`mic_fifo_aw 16`) : 11,4 % de paquets perdus, blocage maximal de la page 226 ms, ~1140 blocages de plus de 3 ms en 38 s (un par image video) : un FIFO de quelques ms ne suffit pas. Les paquets passent donc par la DDR4 :
+```
+paquetiseur -> FIFO d'entree (32 -> 128 bits, FWFT) -> [AXI ecriture] anneau en DDR4 [AXI lecture] -> FIFO de sortie (128 -> 32 bits) -> pipe 0xA1
+```
+- `rtl/audio_ddr_ring.v` : maitre AXI4 128 bits dans le domaine `c0_ddr4_ui_clk`, une rafale de 256 beats (= 1 paquet de 4 Kio, alignee 4 Kio) par transaction, anneau de 2^`mic_ring_aw` paquets (14 -> 64 Mio -> ~1,8 s de flux) a `0xA0000000` (plage de la DDR4, loin des tampons video). Un paquet n'est compte qu'apres la reponse d'ecriture ; un paquet n'est abandonne (entier) que si l'anneau est plein.
+- Reset : les FIFO ne sont vides que lorsque l'anneau est au repos (jamais en pleine rafale AXI, ce qui bloquerait le bus DDR4 de la video).
+- `add_mics.tcl` ajoute un 3e maitre sur `smartconnect_0` (S02_AXI), connecte `ui_clk` / `ui_aresetn` comme le VDMA et assigne l'espace d'adresses de la DDR4. `set mic_use_ddr 0` retablit l'ancien chemin (un seul FIFO).
+- WireOut 0x24 = {pic, courant} de paquets dans l'anneau (le panneau affiche le retard maximal en ms).
+- Simulation : `sim/run_subsystem_ddr.sh` (modele AXI a delais aleatoires, anneau de 16 paquets, le « PC » s'arrete ~12 paquets) : 24 paquets, 64/64 canaux identiques au modele, 0 paquet abandonne, 0 erreur AXI ; `sim/tb_ddr_ring.v` : plusieurs tours d'anneau, paquets abandonnes entiers quand tout est plein.
+- **Non teste sous Vivado ni sur la carte** : l'inference de l'interface `m_axi`, l'IP FIFO asymetrique (32 -> 128 et 128 -> 32), le 3e port du smartconnect.

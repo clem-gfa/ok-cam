@@ -4,6 +4,9 @@
 //   WireOut 0x20 : bit0 = run, bit1 = ultra, bit2 = locked, bit3 = fifo plein vu (collant)
 //   WireOut 0x21 : paquets abandonnes ;  WireOut 0x22 : overruns du paquetiseur
 //   WireOut 0x23 : occupation du FIFO audio (mots de 32 bits disponibles a la lecture)
+//   WireOut 0x24 : {pic, courant} du nombre de paquets dans l'anneau DDR4 (0 si USE_DDR = 0)
+// USE_DDR = 1 : les paquets passent par un anneau en DDR4 (audio_ddr_ring, domaine ui_clk de la DDR4) entre deux
+// FIFO de changement de domaine : il absorbe les blocages de l'appli PC (64 Mio = ~1,8 s au lieu de ~3,6 ms).
 // Domaines : clk (horloge micros = clk_out2 de clk_wiz_0, 99,96 MHz), ok_clk (okClk, registres FrontPanel et lecture du FIFO), vclk (video).
 module mic_subsystem #(
     parameter DIV_STD        = 44,     // 99,96 MHz / 44 = 2,272 MHz (mode standard)
@@ -12,6 +15,9 @@ module mic_subsystem #(
     parameter SETTLE_PERIODS = 48000,
     parameter INVERT_CLK     = 0,
     parameter FIFO_AW        = 15,     // profondeur du FIFO audio = 2^FIFO_AW mots de 32 bits (15 -> 128 Kio, ~3,6 ms) ; doit valoir celle de l'IP fifo_audio_pkt
+    parameter USE_DDR        = 0,
+    parameter RING_BASE_HI   = 16'hA000,       // 16 bits de poids fort de l'adresse de l'anneau (0xA0000000 : dans la DDR4, loin des tampons video)
+    parameter RING_AW        = 14,     // anneau de 2^RING_AW paquets de 4 Kio (14 -> 64 Mio)
     parameter BLOCK_WORDS    = 256     // taille de bloc de la pipe (mots 32 bits) : doit valoir le bloc utilise par le PC (1024 octets = 256)
 ) (
     input  wire        clk,
@@ -30,6 +36,8 @@ module mic_subsystem #(
     output wire [31:0] wo22_ep_datain_mic_overruns,
     (* X_INTERFACE_INFO = "opalkelly.com:interface:wireout:1.0 wireout23_mic_level EP_DATAIN" *)
     output wire [31:0] wo23_ep_datain_mic_level,
+    (* X_INTERFACE_INFO = "opalkelly.com:interface:wireout:1.0 wireout24_mic_ring EP_DATAIN" *)
+    output wire [31:0] wo24_ep_datain_mic_ring,
 
     (* X_INTERFACE_INFO = "opalkelly.com:interface:btpipeout:1.0 btpipeout_audio EP_DATAIN" *)
     output wire [31:0] btpo_ep_datain_audio,
@@ -41,7 +49,48 @@ module mic_subsystem #(
     output wire        btpo_ep_ready_audio,
 
     output wire        mic_clk_o,
-    input  wire [31:0] mic_data_i
+    input  wire [31:0] mic_data_i,
+
+    // ---- acces a la DDR4 (USE_DDR = 1) : maitre AXI4 128 bits dans le domaine ui_clk de la DDR4 ----------------
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 ui_clk CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF m_axi, ASSOCIATED_RESET ui_aresetn" *)
+    input  wire        ui_clk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 ui_aresetn RST" *)
+    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+    input  wire        ui_aresetn,
+    output wire [31:0]  m_axi_awaddr,
+    output wire [7:0]   m_axi_awlen,
+    output wire [2:0]   m_axi_awsize,
+    output wire [1:0]   m_axi_awburst,
+    output wire         m_axi_awlock,
+    output wire [3:0]   m_axi_awcache,
+    output wire [2:0]   m_axi_awprot,
+    output wire [3:0]   m_axi_awqos,
+    output wire         m_axi_awvalid,
+    input  wire         m_axi_awready,
+    output wire [127:0] m_axi_wdata,
+    output wire [15:0]  m_axi_wstrb,
+    output wire         m_axi_wlast,
+    output wire         m_axi_wvalid,
+    input  wire         m_axi_wready,
+    input  wire [1:0]   m_axi_bresp,
+    input  wire         m_axi_bvalid,
+    output wire         m_axi_bready,
+    output wire [31:0]  m_axi_araddr,
+    output wire [7:0]   m_axi_arlen,
+    output wire [2:0]   m_axi_arsize,
+    output wire [1:0]   m_axi_arburst,
+    output wire         m_axi_arlock,
+    output wire [3:0]   m_axi_arcache,
+    output wire [2:0]   m_axi_arprot,
+    output wire [3:0]   m_axi_arqos,
+    output wire         m_axi_arvalid,
+    input  wire         m_axi_arready,
+    input  wire [127:0] m_axi_rdata,
+    input  wire [1:0]   m_axi_rresp,
+    input  wire         m_axi_rlast,
+    input  wire         m_axi_rvalid,
+    output wire         m_axi_rready
 );
     // ---- commandes (okClk -> clk, quasi statiques) ------------------------------------------
     (* ASYNC_REG = "TRUE" *) reg [15:0] c1, c2;
@@ -67,44 +116,123 @@ module mic_subsystem #(
     wire [63:0] ts, vts; wire [31:0] vcnt;
     ts_unit u_ts (.clk(clk), .rst(rst), .vclk(vclk), .vsof(vsof), .ts(ts), .vts(vts), .vcnt(vcnt));
 
-    // ---- paquets -> FIFO ----------------------------------------------------------------------
+    // ---- paquets -> FIFO(s) -> pipe ------------------------------------------------------------
     wire [31:0] tdata; wire tvalid, tlast, tready;
-    wire [FIFO_AW-1:0] wr_cnt, rd_cnt;
-    wire        full, empty;
-    localparam [FIFO_AW:0] FIFO_MAX = (1 << FIFO_AW) - 1;       // mots utiles du FIFO
-    wire [FIFO_AW:0] fifo_free = FIFO_MAX - wr_cnt;
-    wire space_ok = fifo_free >= 1024;
+    wire        space_ok;
+    wire        full_flag;                       // pour le statut « FIFO plein vu »
     wire [31:0] overruns, dropped;
     audio_packetizer #(.CH(64), .W(24), .NS(21)) u_pkt (
         .clk(clk), .rst(rst), .run(run), .in(fir), .in_valid(fir_v), .ts(ts), .vts(vts), .vcnt(vcnt),
         .space_ok(space_ok), .m_tdata(tdata), .m_tvalid(tvalid), .m_tlast(tlast), .m_tready(tready),
         .overruns(overruns), .dropped(dropped));
-    assign tready = ~full;
 
-    // FIFO a horloges independantes (IP Vivado cree par add_mics.tcl), lecture non FWFT comme le FIFO video.
-    fifo_audio_pkt u_fifo (
-        .rst(rst), .wr_clk(clk), .rd_clk(ok_clk),
-        .din(tdata), .wr_en(tvalid & tready), .rd_en(btpo_ep_read_audio),
-        .dout(btpo_ep_datain_audio), .full(full), .empty(empty),
-        .wr_data_count(wr_cnt), .rd_data_count(rd_cnt));
+    // gray pour traverser les domaines (declarations ici : utilisees par les deux variantes)
+    function [31:0] bin2gray(input [31:0] b); bin2gray = b ^ (b >> 1); endfunction
+    function [31:0] gray2bin(input [31:0] g); integer i; begin gray2bin[31] = g[31];
+        for (i = 30; i >= 0; i = i - 1) gray2bin[i] = gray2bin[i+1] ^ g[i]; end endfunction
 
-    // EP_READY : un bloc complet (BLOCK_WORDS mots) est disponible
-    reg rdy;
-    always @(posedge ok_clk) rdy <= (rd_cnt >= BLOCK_WORDS);
-    assign btpo_ep_ready_audio = rdy;
-    assign wo23_ep_datain_mic_level = {{(32 - FIFO_AW){1'b0}}, rd_cnt};
+    generate if (USE_DDR == 0) begin : g_fifo
+        // FIFO a horloges independantes (IP fifo_audio_pkt), lecture non FWFT comme le FIFO video.
+        wire [FIFO_AW-1:0] wr_cnt, rd_cnt;
+        wire full, empty;
+        localparam [FIFO_AW:0] FIFO_MAX = (1 << FIFO_AW) - 1;       // mots utiles du FIFO
+        wire [FIFO_AW:0] fifo_free = FIFO_MAX - wr_cnt;
+        assign space_ok = fifo_free >= 1024;
+        assign tready = ~full;
+        assign full_flag = full;
+        fifo_audio_pkt u_fifo (
+            .rst(rst), .wr_clk(clk), .rd_clk(ok_clk),
+            .din(tdata), .wr_en(tvalid & tready), .rd_en(btpo_ep_read_audio),
+            .dout(btpo_ep_datain_audio), .full(full), .empty(empty),
+            .wr_data_count(wr_cnt), .rd_data_count(rd_cnt));
+        // EP_READY : un bloc complet (BLOCK_WORDS mots) est disponible
+        reg rdy;
+        always @(posedge ok_clk) rdy <= (rd_cnt >= BLOCK_WORDS);
+        assign btpo_ep_ready_audio = rdy;
+        assign wo23_ep_datain_mic_level = {{(32 - FIFO_AW){1'b0}}, rd_cnt};
+        assign wo24_ep_datain_mic_ring = 32'd0;
+        // pas d'acces DDR4
+        assign m_axi_awaddr = 32'd0; assign m_axi_awlen = 8'd0; assign m_axi_awsize = 3'd0; assign m_axi_awburst = 2'd0;
+        assign m_axi_awlock = 1'b0; assign m_axi_awcache = 4'd0; assign m_axi_awprot = 3'd0; assign m_axi_awqos = 4'd0;
+        assign m_axi_awvalid = 1'b0; assign m_axi_wdata = 128'd0; assign m_axi_wstrb = 16'd0; assign m_axi_wlast = 1'b0;
+        assign m_axi_wvalid = 1'b0; assign m_axi_bready = 1'b0; assign m_axi_araddr = 32'd0; assign m_axi_arlen = 8'd0;
+        assign m_axi_arsize = 3'd0; assign m_axi_arburst = 2'd0; assign m_axi_arlock = 1'b0; assign m_axi_arcache = 4'd0;
+        assign m_axi_arprot = 3'd0; assign m_axi_arqos = 4'd0; assign m_axi_arvalid = 1'b0; assign m_axi_rready = 1'b0;
+    end else begin : g_ddr
+        // ---- reset : les FIFO ne sont vides que lorsque l'anneau est au repos (jamais en pleine rafale AXI) ----
+        (* ASYNC_REG = "TRUE" *) reg [1:0] rq;
+        always @(posedge ui_clk) rq <= {rq[0], rst};
+        wire rst_req_ui = rq[1];
+        wire ring_idle;
+        (* ASYNC_REG = "TRUE" *) reg [1:0] idl;
+        always @(posedge clk) idl <= {idl[0], ring_idle};
+        wire fifo_rst = rst & idl[1];
+
+        // ---- FIFO d'entree : 32 bits (clk) -> 128 bits FWFT (ui_clk), 2048 mots ----
+        wire [127:0] stg_dout; wire stg_empty, stg_full, stg_rd_en;
+        wire [10:0] stg_wcnt; wire [8:0] stg_rcnt;
+        assign tready = ~stg_full;
+        fifo_audio_stage u_stage (
+            .rst(fifo_rst), .wr_clk(clk), .rd_clk(ui_clk),
+            .din(tdata), .wr_en(tvalid & tready), .rd_en(stg_rd_en),
+            .dout(stg_dout), .full(stg_full), .empty(stg_empty),
+            .wr_data_count(stg_wcnt), .rd_data_count(stg_rcnt));
+
+        // ---- anneau en DDR4 ----
+        wire [127:0] out_din; wire out_wr_en, out_full, out_empty; wire [10:0] out_wcnt; wire [12:0] out_rcnt;
+        wire ring_space_ui; wire [15:0] used_ui, peak_ui, axi_err;
+        audio_ddr_ring #(.RING_BASE({RING_BASE_HI[15:0], 16'h0000}), .RING_AW(RING_AW), .STG_CNT_W(9), .OUT_CNT_W(11), .OUT_DEPTH(2048)) u_ring (
+            .clk(ui_clk), .aresetn(ui_aresetn), .rst_req(rst_req_ui),
+            .stg_dout(stg_dout), .stg_empty(stg_empty), .stg_avail(stg_rcnt), .stg_rd_en(stg_rd_en),
+            .out_din(out_din), .out_wr_en(out_wr_en), .out_full(out_full), .out_wr_count(out_wcnt),
+            .m_axi_awaddr(m_axi_awaddr), .m_axi_awlen(m_axi_awlen), .m_axi_awsize(m_axi_awsize), .m_axi_awburst(m_axi_awburst),
+            .m_axi_awlock(m_axi_awlock), .m_axi_awcache(m_axi_awcache), .m_axi_awprot(m_axi_awprot), .m_axi_awqos(m_axi_awqos),
+            .m_axi_awvalid(m_axi_awvalid), .m_axi_awready(m_axi_awready),
+            .m_axi_wdata(m_axi_wdata), .m_axi_wstrb(m_axi_wstrb), .m_axi_wlast(m_axi_wlast), .m_axi_wvalid(m_axi_wvalid), .m_axi_wready(m_axi_wready),
+            .m_axi_bresp(m_axi_bresp), .m_axi_bvalid(m_axi_bvalid), .m_axi_bready(m_axi_bready),
+            .m_axi_araddr(m_axi_araddr), .m_axi_arlen(m_axi_arlen), .m_axi_arsize(m_axi_arsize), .m_axi_arburst(m_axi_arburst),
+            .m_axi_arlock(m_axi_arlock), .m_axi_arcache(m_axi_arcache), .m_axi_arprot(m_axi_arprot), .m_axi_arqos(m_axi_arqos),
+            .m_axi_arvalid(m_axi_arvalid), .m_axi_arready(m_axi_arready),
+            .m_axi_rdata(m_axi_rdata), .m_axi_rresp(m_axi_rresp), .m_axi_rlast(m_axi_rlast), .m_axi_rvalid(m_axi_rvalid), .m_axi_rready(m_axi_rready),
+            .idle(ring_idle), .space_ok(ring_space_ui), .used_pkts(used_ui), .peak_pkts(peak_ui), .axi_errors(axi_err));
+
+        // ---- FIFO de sortie : 128 bits (ui_clk) -> 32 bits (okClk), 2048 beats = 8192 mots ----
+        fifo_audio_out u_out (
+            .rst(fifo_rst), .wr_clk(ui_clk), .rd_clk(ok_clk),
+            .din(out_din), .wr_en(out_wr_en), .rd_en(btpo_ep_read_audio),
+            .dout(btpo_ep_datain_audio), .full(out_full), .empty(out_empty),
+            .wr_data_count(out_wcnt), .rd_data_count(out_rcnt));
+        reg rdy;
+        always @(posedge ok_clk) rdy <= (out_rcnt >= BLOCK_WORDS);
+        assign btpo_ep_ready_audio = rdy;
+        assign wo23_ep_datain_mic_level = {19'd0, out_rcnt};
+
+        // ---- un paquet n'est ecrit que s'il y a de la place dans l'anneau ET dans le FIFO d'entree ----
+        (* ASYNC_REG = "TRUE" *) reg [1:0] sp;
+        always @(posedge clk) sp <= {sp[0], ring_space_ui};
+        assign space_ok = sp[1] && (stg_wcnt < 11'd1024);
+        assign full_flag = ~sp[1];                      // « anneau plein vu »
+
+        // ---- statut de l'anneau (ui_clk -> okClk, en code de Gray) ----
+        reg [31:0] gring;
+        wire [31:0] gu = bin2gray({16'd0, used_ui});
+        wire [31:0] gp = bin2gray({16'd0, peak_ui});
+        always @(posedge ui_clk) gring <= {gp[15:0], gu[15:0]};
+        (* ASYNC_REG = "TRUE" *) reg [31:0] gr1, gr2;
+        always @(posedge ok_clk) begin gr1 <= gring; gr2 <= gr1; end
+        wire [31:0] du = gray2bin({16'd0, gr2[15:0]});
+        wire [31:0] dp = gray2bin({16'd0, gr2[31:16]});
+        assign wo24_ep_datain_mic_ring = {dp[15:0], du[15:0]};
+    end endgenerate
 
     // ---- statut (clk -> okClk) ---------------------------------------------------------------
     reg full_seen;
-    always @(posedge clk) begin if (rst) full_seen <= 1'b0; else if (full) full_seen <= 1'b1; end
+    always @(posedge clk) begin if (rst) full_seen <= 1'b0; else if (full_flag) full_seen <= 1'b1; end
     (* ASYNC_REG = "TRUE" *) reg [3:0] s1, s2;
     always @(posedge ok_clk) begin s1 <= {full_seen, locked, ultra, run}; s2 <= s1; end
     assign wo20_ep_datain_mic_status = {28'd0, s2};
 
     // compteurs : code de Gray pour traverser les domaines
-    function [31:0] bin2gray(input [31:0] b); bin2gray = b ^ (b >> 1); endfunction
-    function [31:0] gray2bin(input [31:0] g); integer i; begin gray2bin[31] = g[31];
-        for (i = 30; i >= 0; i = i - 1) gray2bin[i] = gray2bin[i+1] ^ g[i]; end endfunction
     reg [31:0] gd, go;
     always @(posedge clk) begin gd <= bin2gray(dropped); go <= bin2gray(overruns); end
     (* ASYNC_REG = "TRUE" *) reg [31:0] gd1, gd2, go1, go2;

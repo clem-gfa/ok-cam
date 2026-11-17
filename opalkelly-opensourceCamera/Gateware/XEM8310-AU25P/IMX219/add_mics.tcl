@@ -12,7 +12,7 @@
 # projet camera est strictement inchange.
 #
 # Ajoute : sous-systeme micros (module mic_subsystem), horloge micros 99,96 MHz (clk_wiz_0/clk_out2),
-# FIFO audio a horloges independantes, WireIn 0x01, WireOut 0x20-0x23, pipe a blocs 0xA1, ports mic_clk / mic_data[31:0],
+# FIFO audio a horloges independantes, WireIn 0x01, WireOut 0x20-0x24, pipe a blocs 0xA1, ports mic_clk / mic_data[31:0],
 # contraintes mic_pins.xdc (+ VIO3 = 1,8 V a regler cote FrontPanel) et mic_timing.xdc.
 #----------------------------------------------------------------------
 
@@ -23,14 +23,50 @@ set mic_rtl ../Microphones/rtl
 # deborde fait perdre des paquets entiers) mais plus ca consomme de BRAM : verifier l'utilisation apres synthese.
 if {![info exists mic_fifo_aw]} { set mic_fifo_aw 15 }
 
+# Tampon en anneau en DDR4 (defaut : oui). Les paquets audio passent par une zone de la DDR4 (64 Mio a
+# 0xA0000000 avec mic_ring_aw = 14 : 2^14 paquets de 4 Kio, ~1,8 s de flux) entre deux petits FIFO : l'appli PC peut
+# alors etre bloquee longtemps sans perdre de paquets. set mic_use_ddr 0 : ancien chemin, un seul FIFO (mic_fifo_aw).
+if {![info exists mic_use_ddr]} { set mic_use_ddr 1 }
+if {![info exists mic_ring_aw]} { set mic_ring_aw 14 }
+
 # --- sources -------------------------------------------------------------------------------
 add_files -norecurse [list \
     $mic_rtl/mic_clkgen.v $mic_rtl/pdm_capture.v $mic_rtl/cic_bank.v $mic_rtl/fir_bank.v \
-    $mic_rtl/audio_packetizer.v $mic_rtl/ts_unit.v $mic_rtl/mic_subsystem.v $mic_rtl/axis_sof_monitor.v $mic_rtl/fir_coeffs.vh]
+    $mic_rtl/audio_packetizer.v $mic_rtl/ts_unit.v $mic_rtl/mic_subsystem.v $mic_rtl/audio_ddr_ring.v $mic_rtl/axis_sof_monitor.v $mic_rtl/fir_coeffs.vh]
 set_property file_type {Verilog Header} [get_files fir_coeffs.vh]
 set_property is_global_include true [get_files fir_coeffs.vh]
 set_property include_dirs [list [file normalize $mic_rtl]] [current_fileset]
 
+if {$mic_use_ddr} {
+    # FIFO d'entree : 32 bits (horloge micros) -> 128 bits FWFT (horloge utilisateur de la DDR4), 2048 mots
+    create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_audio_stage
+    set_property -dict [list \
+      CONFIG.Fifo_Implementation {Independent_Clocks_Block_RAM} \
+      CONFIG.Performance_Options {First_Word_Fall_Through} \
+      CONFIG.Input_Data_Width {32} \
+      CONFIG.Input_Depth {2048} \
+      CONFIG.Output_Data_Width {128} \
+      CONFIG.Reset_Pin {true} \
+      CONFIG.Read_Data_Count {true} \
+      CONFIG.Write_Data_Count {true} \
+      CONFIG.Read_Data_Count_Width {9} \
+      CONFIG.Write_Data_Count_Width {11} \
+    ] [get_ips fifo_audio_stage]
+    # FIFO de sortie : 128 bits (horloge DDR4) -> 32 bits (okClk), 2048 beats = 8192 mots, lecture non FWFT comme la video
+    create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_audio_out
+    set_property -dict [list \
+      CONFIG.Fifo_Implementation {Independent_Clocks_Block_RAM} \
+      CONFIG.Input_Data_Width {128} \
+      CONFIG.Input_Depth {2048} \
+      CONFIG.Output_Data_Width {32} \
+      CONFIG.Reset_Pin {true} \
+      CONFIG.Use_Embedded_Registers {false} \
+      CONFIG.Read_Data_Count {true} \
+      CONFIG.Write_Data_Count {true} \
+      CONFIG.Read_Data_Count_Width {13} \
+      CONFIG.Write_Data_Count_Width {11} \
+    ] [get_ips fifo_audio_out]
+} else {
 # FIFO audio : horloges independantes (ecriture = horloge micros, lecture = okClk), 2^mic_fifo_aw x 32, non FWFT.
 # Profond a dessein : l'appli lit la video par tranches et ne lit l'audio qu'entre deux tranches.
 create_ip -name fifo_generator -vendor xilinx.com -library ip -version 13.2 -module_name fifo_audio_pkt
@@ -47,6 +83,8 @@ set_property -dict [list \
   CONFIG.Write_Data_Count_Width $mic_fifo_aw \
 ] [get_ips fifo_audio_pkt]
 
+}
+
 add_files -fileset constrs_1 -norecurse [list ../Microphones/mic_pins.xdc ../Microphones/mic_timing.xdc]
 update_compile_order -fileset sources_1
 
@@ -54,8 +92,8 @@ update_compile_order -fileset sources_1
 set_property -dict [list \
     CONFIG.WI.ADDR_0 {0x00} CONFIG.WI.ADDR_1 {0x01} CONFIG.WI.ADDR_2 {0x1d} CONFIG.WI.ADDR_3 {0x1e} CONFIG.WI.ADDR_4 {0x1f} \
     CONFIG.WI.COUNT {5} \
-    CONFIG.WO.ADDR_0 {0x20} CONFIG.WO.ADDR_1 {0x21} CONFIG.WO.ADDR_2 {0x22} CONFIG.WO.ADDR_3 {0x23} CONFIG.WO.ADDR_4 {0x3e} CONFIG.WO.ADDR_5 {0x3f} \
-    CONFIG.WO.COUNT {6} \
+    CONFIG.WO.ADDR_0 {0x20} CONFIG.WO.ADDR_1 {0x21} CONFIG.WO.ADDR_2 {0x22} CONFIG.WO.ADDR_3 {0x23} CONFIG.WO.ADDR_4 {0x24} CONFIG.WO.ADDR_5 {0x3e} CONFIG.WO.ADDR_6 {0x3f} \
+    CONFIG.WO.COUNT {7} \
     CONFIG.BTPO.ADDR_0 {0xA0} CONFIG.BTPO.ADDR_1 {0xA1} \
     CONFIG.BTPO.COUNT {2} \
 ] [get_bd_cells frontpanel_0]
@@ -72,6 +110,8 @@ if { [catch {set mic_subsystem_0 [create_bd_cell -type module -reference $block_
    error "Unable to add referenced block mic_subsystem: $errmsg"
 }
 set_property CONFIG.FIFO_AW $mic_fifo_aw [get_bd_cells mic_subsystem_0]
+set_property CONFIG.USE_DDR $mic_use_ddr [get_bd_cells mic_subsystem_0]
+set_property CONFIG.RING_AW $mic_ring_aw [get_bd_cells mic_subsystem_0]
 
 # Debut de trame video : detecteur en observateur (interface AXI-Stream « monitor ») sur le flux qui entre
 # dans le VDMA (v_tpg_0 -> axi_vdma_0/S_AXIS_S2MM). Si le branchement de l'observateur echoue dans votre
@@ -101,12 +141,22 @@ connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout20] [get_bd_intf_pins 
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout21] [get_bd_intf_pins mic_subsystem_0/wireout21_mic_dropped]
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout22] [get_bd_intf_pins mic_subsystem_0/wireout22_mic_overruns]
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout23] [get_bd_intf_pins mic_subsystem_0/wireout23_mic_level]
+connect_bd_intf_net [get_bd_intf_pins frontpanel_0/wireout24] [get_bd_intf_pins mic_subsystem_0/wireout24_mic_ring]
 connect_bd_intf_net [get_bd_intf_pins frontpanel_0/btpipeouta1] [get_bd_intf_pins mic_subsystem_0/btpipeout_audio]
 
 # Horloges
 connect_bd_net [get_bd_pins frontpanel_0/okClk]  [get_bd_pins mic_subsystem_0/ok_clk]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out2]  [get_bd_pins mic_subsystem_0/clk] [get_bd_pins mic_subsystem_0/vclk]
 connect_bd_net [get_bd_pins mic_locked/dout]     [get_bd_pins mic_subsystem_0/locked]
+
+# Anneau en DDR4 : le sous-systeme devient un maitre AXI de plus sur la DDR4 (smartconnect_0, horloge utilisateur de la DDR4)
+if {$mic_use_ddr} {
+    set_property CONFIG.NUM_SI {3} [get_bd_cells smartconnect_0]
+    connect_bd_intf_net [get_bd_intf_pins mic_subsystem_0/m_axi] [get_bd_intf_pins smartconnect_0/S02_AXI]
+    connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk]   [get_bd_pins mic_subsystem_0/ui_clk]
+    connect_bd_net [get_bd_pins util_vector_logic_0/Res] [get_bd_pins mic_subsystem_0/ui_aresetn]
+    assign_bd_address -offset 0x80000000 -range $ddr4_range -target_address_space [get_bd_addr_spaces mic_subsystem_0/m_axi] [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
+}
 
 # Pads
 connect_bd_net [get_bd_pins mic_subsystem_0/mic_clk_o]  [get_bd_ports mic_clk]

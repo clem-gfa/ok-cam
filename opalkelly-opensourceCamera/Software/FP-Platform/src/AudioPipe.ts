@@ -15,6 +15,7 @@ export const MIC_WO_STATUS = 0x20; // bit0 run, bit1 ultrasonic clock, bit2 pres
 export const MIC_WO_DROPPED = 0x21;
 export const MIC_WO_OVERRUNS = 0x22;
 export const MIC_WO_LEVEL = 0x23; // 32-bit words waiting in the audio FIFO
+export const MIC_WO_RING = 0x24; // {peak[31:16], current[15:0]} packets in the DDR4 ring buffer (0 without the DDR4 ring)
 
 export const MIC_STATUS_RUN = 0x1;
 export const MIC_STATUS_PRESENT = 0x4;
@@ -73,7 +74,9 @@ export interface MicCounters {
     status: number;
     dropped: number; // packets the gateware dropped because its FIFO was full (the PC did not read fast enough)
     overruns: number;
-    level: number; // words waiting in the audio FIFO (32768 = full)
+    level: number; // words waiting in the audio FIFO
+    ringUsed: number; // packets currently held in the DDR4 ring (gateware built with the DDR4 ring)
+    ringPeak: number; // maximum since the last reset: how deep the PC backlog got
 }
 
 export async function micCounters(dataPort: IFPGADataPortClassic): Promise<MicCounters> {
@@ -83,5 +86,7 @@ export async function micCounters(dataPort: IFPGADataPortClassic): Promise<MicCo
         dropped: dataPort.getWireOutValue(MIC_WO_DROPPED) >>> 0,
         overruns: dataPort.getWireOutValue(MIC_WO_OVERRUNS) >>> 0,
         level: dataPort.getWireOutValue(MIC_WO_LEVEL) >>> 0,
+        ringUsed: dataPort.getWireOutValue(MIC_WO_RING) & 0xffff,
+        ringPeak: (dataPort.getWireOutValue(MIC_WO_RING) >>> 16) & 0xffff,
     };
 }

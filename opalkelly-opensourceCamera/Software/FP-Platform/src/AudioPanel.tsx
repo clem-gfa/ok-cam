@@ -309,6 +309,9 @@ const AudioPanel: React.FC<AudioPanelProps> = ({ dataPort, stream, workQueue }) 
                                 <div style={{ marginTop: 2, color: "#9aa5b1" }}>
                                     FPGA: dropped {fpga.dropped} | overruns {fpga.overruns} | FIFO {((fpga.level * 4) / 1024).toFixed(0)} KB |
                                     {(fpga.status & 0x8) !== 0 ? " FIFO was full" : " FIFO never full"}
+                                    {fpga.ringPeak > 0 && recorderRef.current
+                                        ? ` | DDR4 ring: ${fpga.ringUsed} pk now, peak ${fpga.ringPeak} pk = ${((fpga.ringPeak * 21 * 1000) / recorderRef.current.sampleRate).toFixed(0)} ms of backlog`
+                                        : ""}
                                 </div>
                             )}
                         </>
