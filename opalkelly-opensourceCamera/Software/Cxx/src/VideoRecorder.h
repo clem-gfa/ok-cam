@@ -69,15 +69,28 @@ public:
     virtual std::string path() const = 0;
 };
 
-// Creates the sink of one file ("part"): `base` is the path without extension.
+// How the video is encoded (see VideoRecorderOptions for the meaning).
+struct VideoEncodeSettings {
+    std::string ffmpegPath;
+    int crf = 20;
+    std::string x264Preset = "ultrafast";
+    int scalePercent = 100;
+};
+
+// Creates the sink of one file ("part"): `base` is the path without extension; `fps` is the rate of the frames written.
 using VideoSinkFactory = std::function<std::unique_ptr<IVideoSink>(
-    const std::string& base, int width, int height, double fps, const std::string& codec, const std::string& ffmpeg,
+    const std::string& base, int width, int height, double fps, const std::string& codec, const VideoEncodeSettings& enc,
     std::string& err)>;
 
 struct VideoRecorderOptions {
     std::string codec = "auto";                 // auto | h264 | mjpeg | ffv1 | raw
     std::string ffmpegPath;                     // default: $OKCAM_FFMPEG or "ffmpeg"
-    double fps = 30;                            // nominal rate written in the container (real timing: the CSV)
+    double fps = 30;                            // nominal rate of the camera (real timing: the CSV)
+    // Size of the files (h264 / mjpeg; the raw codec ignores them):
+    int crf = 20;                               // x264 quality: 18 near lossless ... 28 compact ... 35 small (higher = smaller, blurrier)
+    std::string x264Preset = "ultrafast";       // ultrafast (light on the CPU) ... veryfast ... medium (smaller files, heavier)
+    int scalePercent = 100;                     // picture size: 100, 75, 50, 25 ... (% of the width and of the height)
+    int frameDivider = 1;                       // record 1 frame out of N (1 = all, 2 = half the frame rate...): all codecs
     std::size_t maxQueuedBytes = kVideoDefaultMaxQueuedBytes;
     VideoSinkFactory sinkFactory;               // tests: custom sinks
 };
@@ -216,12 +229,18 @@ private:
 class FfmpegSink : public IVideoSink {
 public:
     FfmpegSink(const std::string& path, const std::string& logPath, int w, int h, double fps, const std::string& codec,
-               const std::string& ffmpeg)
+               const VideoEncodeSettings& settings)
         : m_path(path) {
+        const std::string& ffmpeg = settings.ffmpegPath;
+        const int crf = std::max(0, std::min(51, settings.crf));
+        // width and height: the requested share, rounded down to an even number (yuv420 needs it)
+        char vf[160];
+        std::snprintf(vf, sizeof vf, " -vf \"scale=trunc(iw*%g/2)*2:trunc(ih*%g/2)*2\"",
+                      std::max(1, std::min(100, settings.scalePercent)) / 100.0, std::max(1, std::min(100, settings.scalePercent)) / 100.0);
         std::string enc;
-        if (codec == "h264") enc = "-c:v libx264 -preset ultrafast -crf 20 -pix_fmt yuv420p -vf \"scale=trunc(iw/2)*2:trunc(ih/2)*2\"";
-        else if (codec == "mjpeg") enc = "-c:v mjpeg -q:v 2";
-        else enc = "-c:v ffv1 -level 3";
+        if (codec == "h264") enc = "-c:v libx264 -preset " + settings.x264Preset + " -crf " + std::to_string(crf) + " -pix_fmt yuv420p" + vf;
+        else if (codec == "mjpeg") enc = "-c:v mjpeg -q:v " + std::to_string(std::max(2, std::min(31, 2 + (crf - 18) * 3 / 4))) + vf;   // crf 18 -> 2, 28 -> 9, 35 -> 14
+        else enc = std::string("-c:v ffv1 -level 3") + vf;
         char head[256];
         std::snprintf(head, sizeof head, " -hide_banner -loglevel warning -y -f rawvideo -pix_fmt rgb24 -video_size %dx%d -framerate %g -i - ",
                       w, h, fps);
@@ -255,11 +274,11 @@ private:
 };
 
 inline std::unique_ptr<IVideoSink> defaultSink(const std::string& base, int w, int h, double fps, const std::string& codec,
-                                               const std::string& ffmpeg, std::string& err) {
+                                               const VideoEncodeSettings& enc, std::string& err) {
     try {
         const std::string path = base + extensionFor(codec);
         if (codec == "raw") return std::make_unique<RawSink>(path);
-        return std::make_unique<FfmpegSink>(path, base + "_ffmpeg.log", w, h, fps, codec, ffmpeg);
+        return std::make_unique<FfmpegSink>(path, base + "_ffmpeg.log", w, h, fps, codec, enc);
     } catch (const std::exception& e) {
         err = e.what();
         return nullptr;
@@ -337,6 +356,7 @@ public:
             m_probe = probePending ? probe : std::shared_future<std::string>();
             m_probePending = probePending;
             m_stats = VideoStats();
+            m_framesOffered = 0;
             m_stats.armed = true;
             m_stats.encoder = m_codec == "raw" ? "raw RGB" : (m_codec + " (ffmpeg)");
             m_queue.clear();
@@ -363,6 +383,7 @@ public:
         const std::size_t bytes = std::size_t(w) * std::size_t(h) * 3;
         std::unique_lock<std::mutex> l(m_mx);
         if (!m_armed) return false;
+        if (m_opt.frameDivider > 1 && (m_framesOffered++ % uint64_t(m_opt.frameDivider)) != 0) return true;   // skipped on purpose, not a loss
         if (m_queuedBytes + bytes > m_opt.maxQueuedBytes) { m_stats.framesDropped++; return false; }
         Item it;
         if (!m_pool.empty()) { it.data = std::move(m_pool.back()); m_pool.pop_back(); }
@@ -460,7 +481,8 @@ private:
                     std::snprintf(suffix, sizeof suffix, part == 0 ? "" : "_p%02d", part);
                     const std::string base = (std::filesystem::path(m_dir) / (m_session + "_video" + suffix)).string();
                     std::string err;
-                    sink = m_opt.sinkFactory(base, curW, curH, m_opt.fps, m_codec, m_opt.ffmpegPath, err);
+                    sink = m_opt.sinkFactory(base, curW, curH, m_opt.fps / std::max(1, m_opt.frameDivider), m_codec,
+                                             VideoEncodeSettings{m_opt.ffmpegPath, m_opt.crf, m_opt.x264Preset, m_opt.scalePercent}, err);
                     if (!sink) {
                         fail(err.empty() ? "cannot open the video output" : err);
                     } else {
@@ -508,7 +530,9 @@ private:
           << "size: " << w << "x" << h << "\n"
           << "pixel_format: rgb24 (8-bit R,G,B per pixel) as read from the camera pipeline\n"
           << "encoder: " << m_stats.encoder << "\n"
-          << "nominal_fps: " << m_opt.fps << " (real timing: <session>_video.csv)\n"
+          << "quality: crf " << m_opt.crf << ", x264 preset " << m_opt.x264Preset << " (h264); picture scaled to " << m_opt.scalePercent
+          << "% (the size above is the CAMERA's, the file is smaller); 1 frame out of " << m_opt.frameDivider << " recorded\n"
+          << "nominal_fps: " << m_opt.fps / std::max(1, m_opt.frameDivider) << " (real timing: <session>_video.csv)\n"
           << "fpga_tick_hz: 99960000 (audio_ts / sof_ts columns of the CSV, and the ts columns of the audio CSVs)\n"
           << "sof_count: number of video frame starts the gateware had counted when the PC read the frame; the offset between\n"
           << "  a frame and its frame start is a constant pipeline latency (a few frames): calibrate it once with an event that\n"
@@ -521,6 +545,7 @@ private:
     std::vector<std::vector<uint8_t>> m_pool;       // recycled frame buffers (no allocation per frame)
     std::size_t m_queuedBytes = 0;
     VideoRecorderOptions m_opt;
+    uint64_t m_framesOffered = 0;               // frames given to writeFrame since start (frameDivider)
     std::string m_dir, m_session, m_codec;
     std::shared_future<std::string> m_probe;   // ffmpeg encoder list still being probed (m_probePending)
     bool m_probePending = false;

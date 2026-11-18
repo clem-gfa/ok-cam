@@ -123,7 +123,7 @@ int main() {
         VideoRecorderOptions opt;
         opt.codec = "test";
         opt.maxQueuedBytes = 5u * 64 * 48 * 3;    // room for 5 frames
-        opt.sinkFactory = [&](const std::string&, int, int, double, const std::string&, const std::string&, std::string&) {
+        opt.sinkFactory = [&](const std::string&, int, int, double, const std::string&, const VideoEncodeSettings&, std::string&) {
             return std::unique_ptr<IVideoSink>(new SlowSink(&written));
         };
         std::string why;
@@ -151,7 +151,7 @@ int main() {
         const fs::path dir = tmpDir("fail");
         VideoRecorder rec;
         VideoRecorderOptions opt; opt.codec = "test";
-        opt.sinkFactory = [](const std::string&, int, int, double, const std::string&, const std::string&, std::string&) { return std::unique_ptr<IVideoSink>(new FailSink()); };
+        opt.sinkFactory = [](const std::string&, int, int, double, const std::string&, const VideoEncodeSettings&, std::string&) { return std::unique_ptr<IVideoSink>(new FailSink()); };
         std::string why;
         assert(rec.start(dir.string(), "okcam_f", opt, why));
         const auto f = makeFrame(16, 16, 0);
@@ -176,6 +176,61 @@ int main() {
         rec.stop();
         assert(fs::exists(dir / "okcam_n_video.rgb24") && rec.stats().error.empty());
         fs::remove_all(dir);
+    }
+
+    // ---- frame divider: 1 frame out of 3, nominal rate divided, skipped frames are not "dropped" ------------------------------------------------
+    {
+        struct CountSink : IVideoSink {
+            std::atomic<int>* n;
+            bool write(const uint8_t*, std::size_t, std::string&) override { (*n)++; return true; }
+            bool close(std::string&) override { return true; }
+            std::string path() const override { return "count"; }
+        };
+        std::atomic<int> n{0}; std::atomic<double> fpsSeen{0};
+        const fs::path dir = tmpDir("div");
+        VideoRecorder rec;
+        VideoRecorderOptions opt; opt.codec = "test"; opt.fps = 30; opt.frameDivider = 3;
+        opt.sinkFactory = [&](const std::string&, int, int, double fps, const std::string&, const VideoEncodeSettings&, std::string&) {
+            fpsSeen = fps; auto s = std::make_unique<CountSink>(); s->n = &n; return std::unique_ptr<IVideoSink>(std::move(s));
+        };
+        std::string why;
+        assert(rec.start(dir.string(), "okcam_div", opt, why));
+        const auto f = makeFrame(16, 16, 0);
+        for (int i = 0; i < 30; i++) assert(rec.writeFrame(f.data(), 16, 16, VideoSync()));
+        rec.stop();
+        assert(n == 10 && rec.stats().framesWritten == 10 && rec.stats().framesDropped == 0 && fpsSeen == 10.0);
+        fs::remove_all(dir);
+    }
+
+    // ---- real ffmpeg (skipped when absent): quality / picture size really change the file ----------------------------------------------------------
+    if (!video_detail::ffmpegEncoders("ffmpeg").empty() && video_detail::hasEncoderList(video_detail::ffmpegEncoders("ffmpeg")) &&
+        video_detail::ffmpegEncoders("ffmpeg").find("libx264") != std::string::npos) {
+        auto run = [&](int crf, int scale, int divider, const char* tag, uintmax_t& size, std::string& dims) {
+            const fs::path dir = tmpDir(tag);
+            VideoRecorder rec;
+            VideoRecorderOptions opt; opt.codec = "h264"; opt.crf = crf; opt.scalePercent = scale; opt.frameDivider = divider;
+            std::string why;
+            assert(rec.start(dir.string(), "okcam_q", opt, why));
+            for (int n = 0; n < 24; n++) {                         // 320 x 180 moving pattern with noise
+                std::vector<uint8_t> f(320 * 180 * 3);
+                for (int y = 0; y < 180; y++) for (int x = 0; x < 320; x++) for (int c = 0; c < 3; c++)
+                    f[(y * 320 + x) * 3 + c] = uint8_t(((x + 3 * n) * (c + 1) + y * 5) ^ ((x * 7919 + y * 104729 + n * 13 + c) >> 3 & 0x3F));
+                rec.writeFrame(f.data(), 320, 180, VideoSync());
+            }
+            rec.stop();
+            assert(rec.stats().error.empty());
+            size = fs::file_size(dir / "okcam_q_video.mp4");
+            FILE* p = popen(("ffprobe -v error -select_streams v:0 -show_entries stream=width,height,nb_frames -of csv=p=0 \"" + (dir / "okcam_q_video.mp4").string() + "\" 2>&1").c_str(), "r");
+            char b[128] = {0}; if (p) { (void)!fgets(b, sizeof b, p); pclose(p); }
+            dims = b;
+            fs::remove_all(dir);
+        };
+        uintmax_t big, small, half, thirds; std::string d1, d2, d3, d4;
+        run(18, 100, 1, "q1", big, d1); run(35, 100, 1, "q2", small, d2); run(23, 50, 1, "q3", half, d3); run(23, 100, 3, "q4", thirds, d4);
+        std::cout << "h264 crf18 " << big << " B (" << d1 << ") crf35 " << small << " B  50% " << half << " B (" << d3 << ")  1/3 frames " << thirds << " B (" << d4 << ")\n";
+        assert(small < big / 2);                                   // quality 35 is much smaller than 18
+        assert(d1.rfind("320,180", 0) == 0 && d3.rfind("160,90", 0) == 0);   // 50 % picture: half the width and height
+        assert(d4.find(",8") != std::string::npos);                // 24 frames / 3 = 8 recorded
     }
 
     // ---- slow ffmpeg probe: start() does not wait for it (the application used to freeze for seconds on Windows) -------------------------

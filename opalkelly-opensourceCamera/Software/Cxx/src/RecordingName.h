@@ -55,7 +55,10 @@ inline std::string recordingSession(const std::string& prefix, bool audioOnly, s
 struct RecordingSettings {
     std::string prefix = "okcam";
     std::string dir;                                   // last folder used (empty: ask)
+    int audioDecimation = 1;                           // audio files: 1, 2, 4, 8 (sample rate / N)
+    int audioBits = 24;                                // audio files: 24 or 16 bits
     std::vector<std::function<void()>> listeners;      // called after a change (GUI thread)
+    std::function<void()> persist;                     // called when a recording starts: the owner saves the settings
 
     void setPrefix(const std::string& p) {
         if (p == prefix) return;
@@ -65,6 +68,12 @@ struct RecordingSettings {
     void setDir(const std::string& d) {
         if (d == dir) return;
         dir = d;
+        notify();
+    }
+    void setAudioFormat(int decimation, int bits) {
+        if (decimation == audioDecimation && bits == audioBits) return;
+        audioDecimation = decimation;
+        audioBits = bits;
         notify();
     }
     void notify() { for (auto& l : listeners) l(); }

@@ -551,6 +551,9 @@ inline std::shared_ptr<okcli::RecordingSettings> load() {
     auto r = std::make_shared<okcli::RecordingSettings>();
     r->prefix = read("rec/prefix", "okcam");
     r->dir = read("rec/dir");
+    r->audioDecimation = std::atoi(read("rec/adec", "1").c_str());
+    r->audioBits = std::atoi(read("rec/abits", "24").c_str());
+    if (!okcli::AudioRecordFormat{r->audioDecimation, r->audioBits}.valid()) { r->audioDecimation = 1; r->audioBits = 24; }
     return r;
 }
 }  // namespace recprefs
@@ -858,9 +861,30 @@ private:
                     if (m_recPrefix->GetValue() != v) m_recPrefix->ChangeValue(v);
                 });
             }
+            {   // size of the video files: x264 quality, picture size, frame rate (the audio format is in the Microphones window)
+                auto* grid = new wxFlexGridSizer(2, FromDIP(6), FromDIP(8));
+                grid->AddGrowableCol(1);
+                auto addChoice = [&](const char* label, wxChoice*& ch, std::initializer_list<const char*> items, const char* tip, const char* key, int def) {
+                    grid->Add(new wxStaticText(host, wxID_ANY, label), 0, wxALIGN_CENTRE_VERTICAL);
+                    ch = new wxChoice(host, wxID_ANY);
+                    for (const char* it : items) ch->Append(it);
+                    ch->SetToolTip(tip);
+                    const int i = std::atoi(recprefs::read(key, std::to_string(def).c_str()).c_str());
+                    ch->SetSelection(i >= 0 && i < int(items.size()) ? i : def);
+                    grid->Add(ch, 1, wxEXPAND);
+                };
+                addChoice("Video quality", m_vidQuality, {"High (large files)", "Standard", "Compact", "Small"},
+                          "H.264 quality (CRF 18 / 23 / 28 / 33): lower quality = smaller files", "rec/vquality", 1);
+                addChoice("Picture size", m_vidScale, {"100 %", "75 %", "50 %", "25 %"},
+                          "Width and height of the recorded video, as a share of the camera's", "rec/vscale", 0);
+                addChoice("Frame rate", m_vidRate, {"all frames", "1 of 2", "1 of 3", "1 of 6"},
+                          "Record only one frame out of N", "rec/vrate", 0);
+                column->Add(grid, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            }
             column->Add(m_recVideoBtn, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
             column->Add(m_recVideoInfo, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
             m_recVideoBtn->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) { toggleVideoRecording(e.IsChecked()); });
+            m_recSettings->persist = [this]() { saveRecordingPrefs(); };
             okcli::prefetchFfmpegProbe(recprefs::read("rec/ffmpeg"));   // slow on Windows: done now, in the background, not when Record is pressed
             m_recTimer = new wxTimer(this);
             Bind(wxEVT_TIMER, [this](wxTimerEvent&) { updateVideoRecordingStatus(); }, m_recTimer->GetId());
@@ -1241,6 +1265,16 @@ private:
     }
 
     // ---- video (+ audio) recording ------------------------------------------------------------------------------------------
+    // Saved when a recording starts (video or audio alone): prefix, folder, audio format, video size choices.
+    void saveRecordingPrefs() {
+        recprefs::write("rec/prefix", m_recSettings->prefix);
+        recprefs::write("rec/dir", m_recSettings->dir);
+        recprefs::write("rec/adec", std::to_string(m_recSettings->audioDecimation));
+        recprefs::write("rec/abits", std::to_string(m_recSettings->audioBits));
+        if (m_vidQuality) recprefs::write("rec/vquality", std::to_string(m_vidQuality->GetSelection()));
+        if (m_vidScale) recprefs::write("rec/vscale", std::to_string(m_vidScale->GetSelection()));
+        if (m_vidRate) recprefs::write("rec/vrate", std::to_string(m_vidRate->GetSelection()));
+    }
     void toggleVideoRecording(bool on) {
         if (!m_worker) { m_recVideoBtn->SetValue(false); return; }
         if (!on) { stopVideoRecording(); return; }
@@ -1249,9 +1283,16 @@ private:
         m_recSettings->setDir(dlg.GetPath().ToStdString(wxConvUTF8));
         // Prefix chosen by the user (sanitized for file names); the field shows what will really be used
         const std::string session = okcli::recordingSession(m_recSettings->prefix, false, std::time(nullptr));
-        recprefs::write("rec/prefix", m_recSettings->prefix);
-        recprefs::write("rec/dir", m_recSettings->dir);
+        saveRecordingPrefs();
         okcli::VideoRecorderOptions opt;
+        {   // size of the files (see the three choices of the sidebar); CRF 18 / 23 / 28 / 33, veryfast: much smaller than ultrafast for the same quality
+            static const int kCrf[] = {18, 23, 28, 33}, kScale[] = {100, 75, 50, 25}, kDiv[] = {1, 2, 3, 6};
+            auto at = [](wxChoice* c) { const int i = c ? c->GetSelection() : 0; return (i >= 0 && i < 4) ? i : 0; };
+            opt.crf = kCrf[at(m_vidQuality)];
+            opt.x264Preset = "veryfast";
+            opt.scalePercent = kScale[at(m_vidScale)];
+            opt.frameDivider = kDiv[at(m_vidRate)];
+        }
         opt.ffmpegPath = recprefs::read("rec/ffmpeg");     // chosen earlier by the user; empty: PATH / usual install folders
         if (const char* c = std::getenv("OKCAM_VIDEO_CODEC")) opt.codec = c;     // auto | h264 | mjpeg | ffv1 | raw
         std::string why;
@@ -1503,6 +1544,7 @@ private:
     // prefix + folder of the recordings, shared with the microphone window; restored from wxConfig
     std::shared_ptr<okcli::RecordingSettings> m_recSettings = recprefs::load();
     wxTextCtrl* m_recPrefix = nullptr;
+    wxChoice *m_vidQuality = nullptr, *m_vidScale = nullptr, *m_vidRate = nullptr;
     wxCheckBox* m_detectChk = nullptr;
     wxChoice* m_detectRate = nullptr;
     wxStaticText* m_detectInfo = nullptr;

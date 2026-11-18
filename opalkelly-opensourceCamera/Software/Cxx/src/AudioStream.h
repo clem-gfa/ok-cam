@@ -46,6 +46,8 @@
 #include <thread>
 #include <vector>
 
+#include "AudioConvert.h"
+
 namespace okcli {
 
 constexpr int      kAudioChannels      = 64;
@@ -60,7 +62,7 @@ constexpr int      kAudioPipeAddress   = 0xA1;
 constexpr int      kAudioTicksPerFrame = 528;      // 22 clk per PDM period x 24 (decimation)
 constexpr double   kAudioTickHz        = 99.96e6;
 constexpr int      kAudioPeakBlock     = 8;        // frames per min/max block kept for the display
-constexpr std::size_t kAudioRecChunkBytes     = std::size_t(1) << 20;   // one disk write per MiB, not per packet
+constexpr std::size_t kAudioRecChunkBytes     = (std::size_t(1) << 20) / kAudioFrameBytes * kAudioFrameBytes;   // ~1 MiB per disk write, not per packet; whole frames (the converter works on frames)
 constexpr std::size_t kAudioRecMaxQueuedBytes = std::size_t(64) << 20;  // more than this waiting: the recording stops
 constexpr uint32_t kAudioCatchUpRingPackets   = 200;                    // ~22 ms of backlog in the DDR4 ring
 
@@ -94,7 +96,8 @@ inline bool parseAudioPacket(const uint8_t* p, AudioPacketInfo& out) {
 }
 
 // RF64 header (valid beyond 4 GiB): 64-channel 24-bit PCM, WAVE_FORMAT_EXTENSIBLE. 104 bytes.
-inline std::vector<uint8_t> buildWavHeader(uint64_t dataBytes, uint32_t sampleRate) {
+inline std::vector<uint8_t> buildWavHeader(uint64_t dataBytes, uint32_t sampleRate, int bytesPerSample = 3) {
+    const uint32_t frameBytes = uint32_t(kAudioChannels * bytesPerSample);
     std::vector<uint8_t> h(104, 0);
     auto str = [&](std::size_t o, const char* s) { std::memcpy(&h[o], s, std::strlen(s)); };
     auto u16 = [&](std::size_t o, uint16_t v) { h[o] = uint8_t(v); h[o + 1] = uint8_t(v >> 8); };
@@ -104,12 +107,12 @@ inline std::vector<uint8_t> buildWavHeader(uint64_t dataBytes, uint32_t sampleRa
     str(12, "ds64"); u32(16, 28);
     u64(20, 4 + 36 + 48 + 8 + dataBytes);        // RIFF size
     u64(28, dataBytes);
-    u64(36, dataBytes / kAudioFrameBytes);       // sample count
+    u64(36, dataBytes / frameBytes);             // sample count
     u32(44, 0);
     str(48, "fmt "); u32(52, 40);
-    u16(56, 0xFFFE); u16(58, kAudioChannels); u32(60, sampleRate); u32(64, sampleRate * kAudioFrameBytes);
-    u16(68, kAudioFrameBytes); u16(70, 24);
-    u16(72, 22); u16(74, 24); u32(76, 0);        // extension size, valid bits, channel mask
+    u16(56, 0xFFFE); u16(58, kAudioChannels); u32(60, sampleRate); u32(64, sampleRate * frameBytes);
+    u16(68, uint16_t(frameBytes)); u16(70, uint16_t(8 * bytesPerSample));
+    u16(72, 22); u16(74, uint16_t(8 * bytesPerSample)); u32(76, 0);        // extension size, valid bits, channel mask
     static const uint8_t pcm[16] = {1,0,0,0, 0,0, 0x10,0, 0x80,0, 0,0xAA,0, 0x38,0x9B,0x71};  // KSDATAFORMAT_SUBTYPE_PCM
     std::memcpy(&h[80], pcm, 16);
     str(96, "data"); u32(100, 0xFFFFFFFFu);
@@ -166,10 +169,10 @@ inline AudioSinkFactory defaultAudioSinkFactory() {
 }
 
 // True if `dir` has room for a recording (a segment being written plus margin).
-inline bool audioDiskSpaceOk(const std::string& dir, double segmentSeconds, std::string& why) {
+inline bool audioDiskSpaceOk(const std::string& dir, double segmentSeconds, std::string& why, double bytesPerSecond = 36.3e6) {
     std::error_code ec;
     const auto info = std::filesystem::space(dir, ec);
-    const double need = 3.0 * segmentSeconds * 36.3e6;
+    const double need = 3.0 * segmentSeconds * bytesPerSecond;
     if (ec) { why = "cannot query the free space of " + dir + ": " + ec.message(); return false; }
     if (double(info.available) < need) {
         char b[160];
@@ -318,13 +321,18 @@ public:
 
     // ---- recording ----------------------------------------------------------------------------------------------
     // Writes <dir>/<session>_<n>.wav and .csv through `factory` (default: files). Call from any thread.
-    void startRecording(const std::string& dir, const std::string& session, AudioSinkFactory factory = defaultAudioSinkFactory()) {
+    // `format`: lower sample rate and / or 16 bits to shrink the files (see AudioConvert.h); default: the 24-bit stream as is.
+    void startRecording(const std::string& dir, const std::string& session, AudioSinkFactory factory = defaultAudioSinkFactory(),
+                        AudioRecordFormat format = AudioRecordFormat()) {
+        if (!format.valid()) throw std::invalid_argument("unsupported audio recording format");
         stopRecording();
         startWriter();
         RecPtr rec = std::make_shared<Recording>();
         rec->dir = dir;
         rec->session = session;
         rec->factory = std::move(factory);
+        rec->format = format;
+        if (!format.isCopy()) rec->converter = std::make_unique<AudioConverter>(format);
         {
             std::lock_guard<std::mutex> l(m_mx);
             m_stats.recordedFrames = 0;
@@ -402,12 +410,15 @@ private:
         std::unique_ptr<IAudioFileSink> sink;
         std::vector<uint8_t> chunk;       // being filled by the device thread
         std::size_t chunkLen = 0;
-        uint64_t frames = 0;
+        uint64_t frames = 0;              // input frames (device thread): segment length, CSV
+        uint64_t outFrames = 0;           // frames written to the file (writer thread only): WAV header
         std::vector<std::string> csv;
     };
     struct Recording {
         std::string dir, session;
         AudioSinkFactory factory;
+        AudioRecordFormat format;
+        std::unique_ptr<AudioConverter> converter;   // writer thread only; null = copy
         int segment = 0;
         std::shared_ptr<Segment> current;
         std::atomic<std::size_t> queuedBytes{0};
@@ -446,7 +457,7 @@ private:
                 seg->frames += lostFrames;
                 addRecorded(lostFrames);
             }
-            seg->csv.push_back(std::to_string(h.seq) + ',' + std::to_string(h.ts) + ',' + std::to_string(seg->frames) + ',' +
+            seg->csv.push_back(std::to_string(h.seq) + ',' + std::to_string(h.ts) + ',' + std::to_string(seg->frames / uint64_t(rec->format.decimation)) + ',' +
                                std::to_string(h.videoFrames) + ',' + std::to_string(h.videoTs) + ',' + (h.lostBefore ? "1" : "0"));
             append(rec, seg, h.payload, std::size_t(h.nsamp) * kAudioFrameBytes);
             seg->frames += h.nsamp;
@@ -477,8 +488,15 @@ private:
         seg->sink = rec->factory(seg->wavPath);
         seg->chunk.assign(kAudioRecChunkBytes, 0);
         seg->csv.push_back("seq,ts,first_frame,video_frames,video_ts,lost_before");
-        const std::vector<uint8_t> hdr = buildWavHeader(0, m_sampleRate);   // placeholder, rewritten at the end
-        append(rec, seg, hdr.data(), hdr.size());
+        // placeholder header, rewritten at the end; written straight by the writer thread (it must not go through the converter)
+        std::vector<uint8_t> hdr = buildWavHeader(0, m_sampleRate / uint32_t(rec->format.decimation), rec->format.bytesPerSample());
+        post([this, rec, seg, hdr = std::move(hdr)]() {
+            try {
+                if (!recFailed(*rec)) seg->sink->write(hdr.data(), hdr.size());
+            } catch (const std::exception& e) {
+                failRecording(*rec, e.what());
+            }
+        });
         return seg;
     }
 
@@ -506,7 +524,16 @@ private:
         }
         post([this, rec, seg, buf = std::move(buf)]() {
             try {
-                if (!recFailed(*rec)) seg->sink->write(buf.data(), buf.size());
+                if (!recFailed(*rec)) {
+                    if (!rec->converter) {
+                        seg->sink->write(buf.data(), buf.size());
+                        seg->outFrames += buf.size() / kAudioFrameBytes;
+                    } else {
+                        std::vector<uint8_t> out;
+                        seg->outFrames += rec->converter->process(buf.data(), buf.size() / kAudioFrameBytes, out);
+                        if (!out.empty()) seg->sink->write(out.data(), out.size());
+                    }
+                }
             } catch (const std::exception& e) {
                 failRecording(*rec, e.what());
             }
@@ -519,7 +546,8 @@ private:
         post([this, rec, seg]() {
             try {
                 if (recFailed(*rec)) { seg->sink->close(); return; }
-                const std::vector<uint8_t> hdr = buildWavHeader(seg->frames * kAudioFrameBytes, m_sampleRate);
+                const std::vector<uint8_t> hdr = buildWavHeader(seg->outFrames * uint64_t(rec->format.bytesPerFrame()),
+                                                                m_sampleRate / uint32_t(rec->format.decimation), rec->format.bytesPerSample());
                 seg->sink->overwrite(0, hdr.data(), hdr.size());
                 seg->sink->close();
                 {

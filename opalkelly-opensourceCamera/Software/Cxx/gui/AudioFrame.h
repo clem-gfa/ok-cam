@@ -68,8 +68,10 @@ public:
     bool IsRecording() const { return m_audio && m_audio->recording(); }
     bool StartRecordingWith(const std::string& dir, const std::string& session, std::string& why);
     void StopRecording();
+    okcli::AudioRecordFormat SelectedFormat() const;   // sample rate / bits chosen for the recorded files
 
 private:
+    void ShowRecFormat();
     void OnStartStop(wxCommandEvent&);
     void OnRecord(wxCommandEvent&);
     void OnSettings(wxCommandEvent&);
@@ -85,6 +87,9 @@ private:
     bool m_starting = false;
     std::shared_ptr<okcli::RecordingSettings> m_rec;
     wxTextCtrl* m_prefix = nullptr;
+    wxChoice* m_recRate = nullptr;
+    wxChoice* m_recBits = nullptr;
+    wxStaticText* m_recInfo = nullptr;
     okcli::MicCounters m_counters;
     bool m_haveCounters = false;
 

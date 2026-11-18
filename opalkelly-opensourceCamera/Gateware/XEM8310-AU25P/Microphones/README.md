@@ -145,3 +145,19 @@ mémorisés (wxConfig `okcam-gui`, avec le dernier dossier). Noms produits :
 `<préfixe>_<AAAAMMJJ>_<HHMMSS>_video.*` (+ `_NNN.wav/.csv` pour l'audio enregistré en même temps) et
 `<préfixe>_audio_<AAAAMMJJ>_<HHMMSS>_NNN.wav` pour l'audio seul. Le préfixe est nettoyé : espaces → `_`, caractères
 interdits (`/ \ : * ? " < > |`) supprimés, 64 octets max, vide → `okcam`.
+
+### Taille des fichiers enregistrés (application C++)
+
+**Audio** (fenêtre Microphones, « Recorded files ») : fréquence d'échantillonnage ÷1 / ÷2 / ÷4 / ÷8 et 24 ou 16 bits. Le flux
+complet fait 36,3 Mo/s (131 Go/h). Débits obtenus : 24 bits ÷1 = 36,3 ; 16 bits ÷1 = 24,2 ; 24 bits ÷2 = 18,2 ; 16 bits ÷2 = 12,1 ;
+16 bits ÷4 = 6,1 Mo/s. La décimation applique un filtre demi-bande de 47 coefficients (Kaiser, plat jusqu'à 0,2·fe, > 60 dB
+au-delà de 0,3·fe, vérifié par `tests/audio_convert_test.cpp`) ; ÷4 et ÷8 cascadent le filtre. Le retard du filtre est constant
+(23 échantillons de la cadence d'entrée de chaque étage) et les premiers échantillons sont le transitoire du filtre. 16 bits = arrondi
+au plus proche, sans dither (bruit de quantification -98 dBFS). La conversion se fait sur le thread d'écriture (~10 % d'un cœur), jamais
+sur le thread d'acquisition. Les en-têtes WAV portent la bonne fréquence et le bon nombre de bits ; la colonne `first_frame` des
+CSV compte les échantillons du fichier (position d'entrée ÷ décimation). Le choix est figé pendant un enregistrement.
+
+**Vidéo** (colonne de réglages) : qualité H.264 (CRF 18 / 23 / 28 / 33, preset `veryfast`, bien plus compact que l'ancien `ultrafast`
+pour une qualité égale mais plus de CPU : voir les images perdues dans la ligne d'état), taille de l'image (100 / 75 / 50 / 25 %) et cadence
+(toutes les images, 1 sur 2 / 3 / 6). Mjpeg et ffv1 suivent la taille et la cadence ; le codec `raw` ignore la qualité et la taille.
+Les choix sont mémorisés. `_video_info.txt` rappelle les réglages ; le CSV ne contient que les images enregistrées.

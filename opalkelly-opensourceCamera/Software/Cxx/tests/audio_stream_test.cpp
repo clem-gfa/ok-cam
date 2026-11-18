@@ -2,6 +2,7 @@
 // paquets perdus, pipe simulee, segments, ecriture par blocs, panne de disque, rattrapage, fichier WAV RF64.
 // Build : g++ -std=c++17 -I../src audio_stream_test.cpp -pthread -o audio_stream_test
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -231,6 +232,54 @@ int main() {
         pipe.push(makePacket(0, 0, false));
         AudioCapture cap(pipe);
         assert(cap.pumpBlocking() == 1 && cap.stats().packets == 1);
+    }
+
+    // ---- smaller files: 16 bit / decimation by 2 (header, sizes, samples, csv, several segments) ------------------------------------------------
+    for (const AudioRecordFormat fmt : {AudioRecordFormat{1, 16}, AudioRecordFormat{2, 24}, AudioRecordFormat{4, 16}}) {
+        const fs::path dir = tmpDir("fmt");
+        FakePipe pipe;
+        const int NP = 600;
+        for (int q = 0; q < NP; q++) pipe.push(makePacket(uint32_t(q), 0, false));
+        AudioCaptureOptions opt; opt.maxPacketsPerRead = 32; opt.segmentSeconds = 0.03;   // 3 segments
+        AudioCapture cap(pipe, opt);
+        cap.reset();
+        cap.startRecording(dir.string(), "okcam_fmt", defaultAudioSinkFactory(), fmt);
+        drain(cap);
+        cap.stopRecording();
+        assert(cap.stats().segments >= 2 && cap.recordError().empty());
+        std::vector<fs::path> wavs;
+        for (auto& e : fs::directory_iterator(dir)) if (e.path().extension() == ".wav") wavs.push_back(e.path());
+        std::sort(wavs.begin(), wavs.end());
+        uint64_t total = 0;
+        for (const auto& w : wavs) {
+            std::ifstream f(w, std::ios::binary);
+            std::vector<uint8_t> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            const uint64_t frames = (buf.size() - 104) / uint64_t(fmt.bytesPerFrame());
+            const uint64_t ds = uint64_t(audioWord(&buf[0], 7)) | uint64_t(audioWord(&buf[0], 8)) << 32;
+            assert(ds == frames * uint64_t(fmt.bytesPerFrame()));                           // data size in the header
+            assert(audioWord(&buf[0], 15) == 189318 / uint32_t(fmt.decimation));             // sample rate
+            assert(buf[68] == (fmt.bytesPerFrame() & 0xFF) && buf[70] == fmt.bits);           // block align, bits per sample
+            if (fmt.decimation == 1 && w == wavs.front()) {                                  // 16 bit: the top 16 bits (rounded) of the 24-bit samples
+                for (uint64_t i = 0; i < frames; i += 7)
+                    for (int c = 0; c < 64; c += 11) {
+                        const uint8_t* d = &buf[104 + i * 128 + c * 2];
+                        const int32_t v = int16_t(uint16_t(d[0] | d[1] << 8));
+                        const double want = double(sampleValue(i, c)) / 256.0;
+                        assert(std::fabs(double(v) - want) <= 0.5 + 1e-9);
+                    }
+            }
+            total += frames;
+        }
+        const uint64_t inFrames = uint64_t(NP) * NS;
+        assert(total + uint64_t(wavs.size()) * 4 >= inFrames / uint64_t(fmt.decimation) - uint64_t(wavs.size()) * 8 &&
+               total <= inFrames / uint64_t(fmt.decimation) + 8);   // = the input divided by the decimation (a few frames per segment boundary)
+        fs::remove_all(dir);
+    }
+    {
+        FakePipe pipe; AudioCapture cap(pipe);
+        bool threw = false;
+        try { cap.startRecording(fs::temp_directory_path().string(), "x", defaultAudioSinkFactory(), AudioRecordFormat{3, 24}); } catch (const std::invalid_argument&) { threw = true; }
+        assert(threw);
     }
 
     // ---- disk space helper ------------------------------------------------------------------------------------------------

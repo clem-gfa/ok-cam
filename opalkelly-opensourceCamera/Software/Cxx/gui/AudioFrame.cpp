@@ -117,6 +117,20 @@ AudioFrame::AudioFrame(wxWindow* parent, Actions actions, std::shared_ptr<okcli:
     bar->Add(m_layout, 0);
     col->Add(bar, 0, wxALL, 8);
 
+    // Size of the recorded files: lower sample rate (decimation with an anti-aliasing filter) and / or 16 bits
+    auto* bar2 = new wxBoxSizer(wxHORIZONTAL);
+    bar2->Add(new wxStaticText(root, wxID_ANY, "Recorded files:  sample rate"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, 4);
+    m_recRate = new wxChoice(root, wxID_ANY);
+    for (const char* s : {"full (189 kS/s)", "/ 2 (94.7 kS/s)", "/ 4 (47.3 kS/s)", "/ 8 (23.7 kS/s)"}) m_recRate->Append(s);
+    bar2->Add(m_recRate, 0, wxRIGHT, 10);
+    bar2->Add(new wxStaticText(root, wxID_ANY, "bits"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, 4);
+    m_recBits = new wxChoice(root, wxID_ANY);
+    for (const char* s : {"24", "16"}) m_recBits->Append(s);
+    bar2->Add(m_recBits, 0, wxRIGHT, 10);
+    m_recInfo = new wxStaticText(root, wxID_ANY, "");
+    bar2->Add(m_recInfo, 0, wxALIGN_CENTRE_VERTICAL);
+    col->Add(bar2, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
     m_canvas = new AudioWaveCanvas(root);
     col->Add(m_canvas, 1, wxEXPAND | wxLEFT | wxRIGHT, 8);
     m_stats = new wxStaticText(root, wxID_ANY, "");
@@ -134,6 +148,15 @@ AudioFrame::AudioFrame(wxWindow* parent, Actions actions, std::shared_ptr<okcli:
 
     m_startBtn->Bind(wxEVT_BUTTON, &AudioFrame::OnStartStop, this);
     m_recBtn->Bind(wxEVT_BUTTON, &AudioFrame::OnRecord, this);
+    auto recFormatChanged = [this](wxCommandEvent&) {
+        static const int kDec[] = {1, 2, 4, 8};
+        const int i = m_recRate->GetSelection();
+        m_rec->setAudioFormat(kDec[(i >= 0 && i < 4) ? i : 0], m_recBits->GetSelection() == 1 ? 16 : 24);
+    };
+    m_recRate->Bind(wxEVT_CHOICE, recFormatChanged);
+    m_recBits->Bind(wxEVT_CHOICE, recFormatChanged);
+    ShowRecFormat();
+    m_rec->listeners.push_back([this]() { ShowRecFormat(); });
     m_prefix->Bind(wxEVT_TEXT, [this](wxCommandEvent&) { m_rec->setPrefix(m_prefix->GetValue().ToStdString(wxConvUTF8)); });
     m_rec->listeners.push_back([this]() {
         const wxString v = wxString::FromUTF8(m_rec->prefix);
@@ -181,10 +204,28 @@ void AudioFrame::OnStartStop(wxCommandEvent&) {
     }
 }
 
+AudioRecordFormat AudioFrame::SelectedFormat() const {
+    AudioRecordFormat f;
+    f.decimation = m_rec->audioDecimation;
+    f.bits = m_rec->audioBits;
+    return f.valid() ? f : AudioRecordFormat();
+}
+
+// The two choices + the estimated data rate of the files
+void AudioFrame::ShowRecFormat() {
+    const AudioRecordFormat f = SelectedFormat();
+    m_recRate->SetSelection(f.decimation == 2 ? 1 : f.decimation == 4 ? 2 : f.decimation == 8 ? 3 : 0);
+    m_recBits->SetSelection(f.bits == 16 ? 1 : 0);
+    const double bps = f.bytesPerSecond(kAudioTickHz / kAudioTicksPerFrame);
+    m_recInfo->SetLabel(wxString::Format("= %.1f MB/s, %.1f GB per hour", bps / 1e6, bps * 3600 / 1e9));
+}
+
 bool AudioFrame::StartRecordingWith(const std::string& dir, const std::string& session, std::string& why) {
     if (!m_audio) { why = "the microphones are not running"; return false; }
-    if (!audioDiskSpaceOk(dir, 60, why)) return false;
-    m_audio->startRecording(dir, session);
+    const AudioRecordFormat fmt = SelectedFormat();
+    if (!audioDiskSpaceOk(dir, 60, why, fmt.bytesPerSecond(m_audio->sampleRate()))) return false;
+    if (m_rec->persist) m_rec->persist();
+    m_audio->startRecording(dir, session, defaultAudioSinkFactory(), fmt);
     m_msg->SetLabel("");
     UpdateButtons();
     return true;
@@ -228,6 +269,8 @@ void AudioFrame::UpdateButtons() {
     const bool rec = m_audio && m_audio->recording();
     m_recBtn->SetLabel(rec ? "Stop recording" : "Record");
     m_recBtn->Enable(m_running && m_audio);
+    m_recRate->Enable(!rec);          // the format of a recording in progress cannot change
+    m_recBits->Enable(!rec);
 }
 
 wxString AudioFrame::FormatStats(const AudioStats& s, uint32_t /*sampleRate*/) {
