@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "ObjectDetector.h"
+
 class RgbViewport : public wxPanel {
 public:
     explicit RgbViewport(wxWindow* parent);
@@ -28,6 +30,10 @@ public:
     // Image Size mode: true = scale-to-fit (default), false = 1:1 (Original, centered/clipped).
     void SetScaleToFit(bool on) { m_scaleToFit = on; Refresh(false); }
 
+    // Boxes drawn over the image (object detection). Pixels of the analysed image; empty result: nothing drawn.
+    void SetDetections(const okcli::DetectionResult& r) { m_det = r; Refresh(false); }
+    void ClearDetections() { m_det = okcli::DetectionResult(); Refresh(false); }
+
 private:
     void OnPaint(wxPaintEvent&);
 
@@ -35,4 +41,5 @@ private:
     int m_w = 0, m_h = 0;
     bool m_have = false;
     bool m_scaleToFit = true;
+    okcli::DetectionResult m_det;
 };

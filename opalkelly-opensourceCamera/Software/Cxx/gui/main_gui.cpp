@@ -49,8 +49,12 @@
 #include "AudioFrame.h"
 #include "GuiCameraBackend.h"
 #include "RgbViewport.h"
+#include "ObjectDetector.h"
 #include "UserIoFrame.h"
 #include "VideoRecorder.h"
+#ifdef OKCAM_WITH_ONNX
+#include "OnnxYoloDetector.h"
+#endif
 #include "okFrontPanel.h"
 
 using okcli::GuiCameraBackend;
@@ -812,6 +816,17 @@ private:
             wxSizer* column = m_histChk->GetContainingSizer();
             // Video recording (any camera): H.264 through ffmpeg when available, else raw RGB; with the microphones running the
             // audio is recorded with it (same session name), see VideoRecorder.h
+            // Object detection (YOLO26n, ONNX Runtime): boxes drawn over the image, not recorded in the video
+            m_detectChk = new wxCheckBox(host, wxID_ANY, "Detect objects");
+            m_detectInfo = new wxStaticText(host, wxID_ANY, "");
+            column->Add(m_detectChk, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            column->Add(m_detectInfo, 0, wxLEFT | wxRIGHT, FromDIP(16));
+#ifdef OKCAM_WITH_ONNX
+            m_detectChk->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) { setObjectDetection(e.IsChecked()); });
+#else
+            m_detectChk->Enable(false);
+            m_detectInfo->SetLabel("Not available: built without ONNX Runtime");
+#endif
             m_recVideoLine = new wxStaticLine(host);
             m_recVideoBtn = new wxToggleButton(host, wxID_ANY, "Record video...");
             m_recVideoInfo = new wxStaticText(host, wxID_ANY, "");
@@ -1320,9 +1335,59 @@ private:
         m_ioFrame->Raise();
     }
 
+    // ---- object detection -----------------------------------------------------------------------------------------------
+    // Model: $OKCAM_YOLO_MODEL, else models/yolo26n_320.onnx next to the executable.
+    static std::string yoloModelPath() {
+        wxString env;
+        if (wxGetEnv("OKCAM_YOLO_MODEL", &env) && !env.IsEmpty()) return env.ToStdString(wxConvUTF8);
+        return (resourceDir() + wxFILE_SEP_PATH + "models" + wxFILE_SEP_PATH + "yolo26n_320.onnx").ToStdString(wxConvUTF8);
+    }
+    void setObjectDetection(bool on) {
+        m_viewport->ClearDetections();
+        m_detector.reset();
+        m_detSeq = 0;
+        m_detectInfo->SetLabel("");
+#ifdef OKCAM_WITH_ONNX
+        if (on) {
+            try {
+                m_detector = std::make_unique<okcli::DetectionWorker>(std::make_unique<okcli::OnnxYoloDetector>(yoloModelPath()));
+                m_detectInfo->SetLabel("Loading...");
+            } catch (const std::exception& e) {
+                m_detectChk->SetValue(false);
+                m_detectInfo->SetLabel(wxString::FromUTF8(e.what()));
+                m_detectInfo->Wrap(FromDIP(260));
+            }
+        }
+#else
+        (void)on;
+#endif
+        relayoutSidebar();
+    }
+    // Called with every displayed frame: hands it to the detection thread when that is idle and shows its newest result.
+    void updateDetection(const GuiCameraBackend::Frame& f) {
+        if (!m_detector) return;
+        m_detector->submit(f.rgb.data(), f.width, f.height);
+        const std::string err = m_detector->error();
+        if (!err.empty()) {
+            m_detectInfo->SetLabel(wxString::FromUTF8(err));
+            m_detectInfo->Wrap(FromDIP(260));
+            m_detector.reset();
+            m_detectChk->SetValue(false);
+            m_viewport->ClearDetections();
+            relayoutSidebar();
+            return;
+        }
+        const okcli::DetectionResult r = m_detector->latest();
+        if (r.sequence == m_detSeq) return;
+        m_detSeq = r.sequence;
+        m_viewport->SetDetections(r);
+        m_detectInfo->SetLabel(wxString::Format("%zu object(s), %.0f ms", r.objects.size(), r.inferenceMs));
+    }
+
     void showFrame() {
         const GuiCameraBackend::Frame& f = m_worker->CurrentFrame();
         m_viewport->UpdateImage(f.rgb.data(), f.width, f.height);
+        updateDetection(f);
         if (m_histPanel->IsShown()) m_histPanel->UpdateHistogram(f.histogram);
         if (m_ledBmp && !m_continuousBtn->GetValue()) m_ledBmp->Hide();  // single-capture LED flash done
         ++m_frameCount;
@@ -1420,6 +1485,10 @@ private:
     // prefix + folder of the recordings, shared with the microphone window; restored from wxConfig
     std::shared_ptr<okcli::RecordingSettings> m_recSettings = recprefs::load();
     wxTextCtrl* m_recPrefix = nullptr;
+    wxCheckBox* m_detectChk = nullptr;
+    wxStaticText* m_detectInfo = nullptr;
+    std::unique_ptr<okcli::DetectionWorker> m_detector;   // alive while "Detect objects" is ticked
+    uint64_t m_detSeq = 0;
     wxStaticLine* m_boardToolsLine = nullptr;
     wxButton* m_audioBtn = nullptr;
     wxButton* m_ioBtn = nullptr;

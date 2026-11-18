@@ -125,6 +125,49 @@ set(_lua_src "${CMAKE_CURRENT_SOURCE_DIR}/../lua/camera_axi.lua")
 add_custom_command(TARGET okcameragui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_lua_src}" "${_data_dir}/camera_axi.lua")
 
+# Object detection (YOLO26n through ONNX Runtime). Optional: without ONNX Runtime the GUI builds and runs, the
+# "Detect objects" option is just unavailable. Point ONNXRUNTIME_ROOT at an unpacked ONNX Runtime release (the
+# onnxruntime-<os>-<arch>-<ver> archive from GitHub, or the Microsoft.ML.OnnxRuntime NuGet package unzipped), or use
+# -DOKCAM_WITH_ONNX=OFF. The model (models/yolo26n_320.onnx) is staged next to the executable in models/.
+set(ONNXRUNTIME_ROOT "" CACHE PATH "Unpacked ONNX Runtime (include/ + lib/, or the NuGet layout build/native/include + runtimes/<rid>/native)")
+option(OKCAM_WITH_ONNX "Object detection with ONNX Runtime (needs ONNXRUNTIME_ROOT)" ON)
+set(_onnx_ok FALSE)
+if(OKCAM_WITH_ONNX)
+    set(_onnx_hints "${ONNXRUNTIME_ROOT}" "$ENV{ONNXRUNTIME_ROOT}")
+    find_path(ONNXRT_INCLUDE_DIR onnxruntime_cxx_api.h HINTS ${_onnx_hints}
+              PATH_SUFFIXES include include/onnxruntime build/native/include)
+    find_library(ONNXRT_LIBRARY NAMES onnxruntime HINTS ${_onnx_hints}
+                 PATH_SUFFIXES lib runtimes/win-x64/native runtimes/linux-x64/native runtimes/osx-arm64/native runtimes/osx-x64/native)
+    if(ONNXRT_INCLUDE_DIR AND ONNXRT_LIBRARY)
+        set(_onnx_ok TRUE)
+    else()
+        message(STATUS "ONNX Runtime not found (set ONNXRUNTIME_ROOT): object detection disabled in the GUI")
+    endif()
+endif()
+if(_onnx_ok)
+    message(STATUS "Object detection: ONNX Runtime ${ONNXRT_LIBRARY}")
+    target_compile_definitions(okcameragui PRIVATE OKCAM_WITH_ONNX)
+    target_include_directories(okcameragui PRIVATE "${ONNXRT_INCLUDE_DIR}")
+    target_link_libraries(okcameragui PRIVATE "${ONNXRT_LIBRARY}")
+    get_filename_component(_onnx_libdir "${ONNXRT_LIBRARY}" DIRECTORY)
+    if(WIN32)
+        file(GLOB _onnx_rt CONFIGURE_DEPENDS "${_onnx_libdir}/onnxruntime*.dll")
+    elseif(APPLE)
+        file(GLOB _onnx_rt CONFIGURE_DEPENDS "${_onnx_libdir}/libonnxruntime*.dylib")
+    else()
+        file(GLOB _onnx_rt CONFIGURE_DEPENDS "${_onnx_libdir}/libonnxruntime*.so*")
+    endif()
+    foreach(_f ${_onnx_rt})
+        add_custom_command(TARGET okcameragui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "${_fw_dir}")
+    endforeach()
+endif()
+set(_models_src "${CMAKE_CURRENT_SOURCE_DIR}/../models")
+if(EXISTS "${_models_src}")
+    add_custom_command(TARGET okcameragui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${_models_src}" "${_data_dir}/models")
+endif()
+
 # Stage the FPGA bitfiles into Bitfiles/ (the app auto-discovers it; the release archive carries the
 # same folder). OKCAM_BITFILES overrides the location at runtime for custom-gateware builds.
 set(_bitfiles_src "${CMAKE_CURRENT_SOURCE_DIR}/../../bitfiles")
@@ -199,6 +242,12 @@ else()
     install(FILES "${_lua_src}" DESTINATION . COMPONENT app)
     if(EXISTS "${_bitfiles_src}")
         install(DIRECTORY "${_bitfiles_src}/" DESTINATION Bitfiles COMPONENT app)
+    endif()
+    if(EXISTS "${_models_src}")
+        install(DIRECTORY "${_models_src}/" DESTINATION models COMPONENT app)
+    endif()
+    if(_onnx_ok)
+        install(FILES ${_onnx_rt} DESTINATION . COMPONENT app)
     endif()
     # FrontPanel runtime is intentionally NOT installed on Windows/Linux -- it stays external (the
     # customer provides it from their installed FrontPanel-Platform SDK).
