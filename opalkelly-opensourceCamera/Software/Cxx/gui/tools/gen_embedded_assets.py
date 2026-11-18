@@ -21,11 +21,10 @@ OUT    = os.path.join(GUI, "embedded_assets.cpp")
 # (virtual name the app loads, path under assets/, MIME). camera_axi.lua + bitfiles stay external.
 items = [
     ("camera.xrc",         "camera.xrc",         "text/xml"),
-    ("logo/logo.png",      "logo/logo.png",      "image/png"),
+    ("logo/cea.png",       "logo/cea.png",       "image/png"),
     ("logo/led.png",       "logo/led.png",       "image/png"),
-    ("logo/opalkelly.svg", "logo/opalkelly.svg", "image/svg+xml"),
     ("okApp.ico",          "okApp.ico",          "image/x-icon"),
-] + [(f"logo/busy{i}.png", f"logo/busy{i}.png", "image/png") for i in range(1, 40)]
+]
 
 ident = lambda name: "a_" + re.sub(r'[^0-9A-Za-z]', '_', name)
 

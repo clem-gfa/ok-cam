@@ -702,23 +702,29 @@ private:
         });
     }
 
-    // Build the branding header into the XRC placeholder: the lens logo (which doubles as the
-    // spinning activity indicator — the busy frames replace it in place), an LED that lights during
-    // capture, and the Opal Kelly wordmark, absolutely positioned as in the camera.xrc layout.
+    // Branding header, built into the XRC placeholder (brand_host, 230 x 110): the CEA logo (assets/logo/cea.png,
+    // replace that file to change it), the application name and an LED that lights while the camera captures.
+    // The activity animation of the original lens logo is not used (m_busyBitmaps stays empty: startBusy() is a no-op).
     void buildBrand(wxWindow* host) {
-        m_logoBitmap = EmbeddedBitmap("logo/logo.png");
-        for (int i = 1; i <= 39; ++i) {
-            wxBitmap b = EmbeddedBitmap(wxString::Format("logo/busy%d.png", i));
-            if (b.IsOk()) m_busyBitmaps.push_back(b);
+        m_logoBitmap = EmbeddedBitmap("logo/cea.png");
+        if (m_logoBitmap.IsOk()) {                      // fit in 96 x 64, keep the aspect ratio
+            wxImage img = m_logoBitmap.ConvertToImage();
+            const double k = std::min(96.0 / img.GetWidth(), 64.0 / img.GetHeight());
+            if (k < 1.0) img.Rescale(int(img.GetWidth() * k), int(img.GetHeight() * k), wxIMAGE_QUALITY_HIGH);
+            m_logoBitmap = wxBitmap(img);
         }
-        m_logoBmp = new wxStaticBitmap(host, wxID_ANY,
-                                       m_logoBitmap.IsOk() ? m_logoBitmap : wxNullBitmap, wxPoint(0, 20));
+        const int logoH = m_logoBitmap.IsOk() ? m_logoBitmap.GetHeight() : 0;
+        m_logoBmp = new wxStaticBitmap(host, wxID_ANY, m_logoBitmap.IsOk() ? m_logoBitmap : wxNullBitmap,
+                                       wxPoint(0, std::max(0, (110 - logoH) / 2)));
+        auto* name = new wxStaticText(host, wxID_ANY, "DARWIN", wxPoint(106, 34));
+        wxFont f = name->GetFont();
+        f.SetWeight(wxFONTWEIGHT_BOLD);
+        f.SetPointSize(f.GetPointSize() + 3);
+        name->SetFont(f);
+        name->SetSize(name->GetTextExtent("DARWIN") + wxSize(6, 4));   // the best size was computed with the default font
         wxBitmap led = EmbeddedBitmap("logo/led.png");
-        m_ledBmp = new wxStaticBitmap(host, wxID_ANY, led.IsOk() ? led : wxNullBitmap, wxPoint(35, 47));
+        m_ledBmp = new wxStaticBitmap(host, wxID_ANY, led.IsOk() ? led : wxNullBitmap, wxPoint(106, 66));
         m_ledBmp->Hide();
-        wxBitmapBundle okmark = EmbeddedSVG("logo/opalkelly.svg", wxSize(150, 100));
-        if (okmark.IsOk())
-            new wxStaticBitmap(host, wxID_ANY, okmark.GetBitmap(wxSize(150, 100)), wxPoint(70, 0));
         m_busyTimer = new wxTimer(this);
         Bind(wxEVT_TIMER, &CameraFrame::OnBusyTick, this, m_busyTimer->GetId());
     }
@@ -727,7 +733,7 @@ private:
         // The version belongs in the title because on Linux there is nowhere else for it: that
         // archive ships only this GUI, ELF binaries have no file-properties equivalent of the
         // macOS Info.plist or a Windows VERSIONINFO resource, and okcameracli is not shipped.
-        SetTitle("Opal Kelly - okCameraApp " OKCAM_VERSION);
+        SetTitle("CEA - DARWIN " OKCAM_VERSION);
         // Point the backend at camera_axi.lua (staged in the resource dir) for the server-side scripted
         // path over FPoIP. Only used when remote; local/TPG stay C++-direct. Env override wins.
         wxString luaEnv;
@@ -745,9 +751,9 @@ private:
                             : nullptr;
         if (!root) {
             wxMessageBox(
-                "okCameraApp could not load its user-interface resources and cannot start.\n"
+                "CEA - DARWIN could not load its user-interface resources and cannot start.\n"
                 "The application files may be incomplete or corrupted. Reinstall from the original archive.",
-                "okCameraApp", wxOK | wxICON_ERROR);
+                "CEA - DARWIN", wxOK | wxICON_ERROR);
             return;  // m_uiOk stays false; the constructor and OnInit both bail out cleanly
         }
         auto* frameSizer = new wxBoxSizer(wxVERTICAL);

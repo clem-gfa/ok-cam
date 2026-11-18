@@ -25,12 +25,12 @@ BEGIN
         BLOCK "040904b0"  // US English, Unicode
         BEGIN
             VALUE "CompanyName",      "Opal Kelly Incorporated\0"
-            VALUE "FileDescription",  "okCameraApp\0"
+            VALUE "FileDescription",  "CEA - DARWIN\0"
             VALUE "FileVersion",      "@PROJECT_VERSION@\0"
             VALUE "InternalName",     "okCameraApp\0"
             VALUE "LegalCopyright",   "Copyright (c) 2026 Opal Kelly Incorporated\0"
             VALUE "OriginalFilename", "okCameraApp.exe\0"
-            VALUE "ProductName",      "okCameraApp\0"
+            VALUE "ProductName",      "CEA - DARWIN\0"
             VALUE "ProductVersion",   "@PROJECT_VERSION@\0"
         END
     END
