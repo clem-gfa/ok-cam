@@ -38,6 +38,8 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <future>
+#include <map>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -147,6 +149,24 @@ inline std::string ffmpegEncoders(const std::string& ffmpeg) {
     return out;
 }
 
+inline bool hasEncoderList(const std::string& probeOutput) { return probeOutput.find("Encoders:") != std::string::npos; }
+
+// Probing ffmpeg (starting it just to list its encoders) takes from 0.1 s to several seconds on Windows (cmd.exe start-up,
+// antivirus scan of the first run): it is done on a background thread, once per ffmpeg path, and the result is cached. The
+// application asks for it at start-up (prefetchFfmpegProbe), so that "Record" does not wait for it.
+inline std::shared_future<std::string> encoderProbe(const std::string& ffmpeg, bool refresh = false) {
+    static std::mutex mx;
+    static std::map<std::string, std::shared_future<std::string>> cache;
+    std::lock_guard<std::mutex> l(mx);
+    auto it = cache.find(ffmpeg);
+    if (it != cache.end() && !refresh) return it->second;
+    auto prom = std::make_shared<std::promise<std::string>>();
+    std::shared_future<std::string> fut = prom->get_future().share();
+    cache[ffmpeg] = fut;
+    std::thread([prom, ffmpeg] { prom->set_value(ffmpegEncoders(ffmpeg)); }).detach();
+    return fut;
+}
+
 inline std::string resolveCodec(const std::string& requested, const std::string& encoders) {
     const bool has264 = encoders.find("libx264") != std::string::npos;
     const bool hasMjpeg = encoders.find("mjpeg") != std::string::npos;
@@ -163,6 +183,12 @@ inline const char* extensionFor(const std::string& codec) {
     if (codec == "mjpeg") return ".avi";
     if (codec == "ffv1") return ".mkv";
     return ".rgb24";
+}
+
+inline std::string ffmpegPathOrDefault(const std::string& given) {
+    if (!given.empty()) return given;
+    const char* env = std::getenv("OKCAM_FFMPEG");
+    return (env && *env) ? env : findFfmpeg();
 }
 
 class RawSink : public IVideoSink {
@@ -242,6 +268,11 @@ inline std::unique_ptr<IVideoSink> defaultSink(const std::string& base, int w, i
 
 }  // namespace video_detail
 
+// Starts the (slow) ffmpeg probe in the background: call it when the application starts and whenever the ffmpeg path changes.
+inline void prefetchFfmpegProbe(const std::string& ffmpegPath = "") {
+    video_detail::encoderProbe(video_detail::ffmpegPathOrDefault(ffmpegPath));
+}
+
 // True if `dir` has room for a video recording of the given codec (a few minutes at least).
 inline bool videoDiskSpaceOk(const std::string& dir, const std::string& codec, std::string& why) {
     std::error_code ec;
@@ -272,23 +303,28 @@ public:
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         if (!std::filesystem::is_directory(dir)) { why = "cannot use the folder " + dir; return false; }
-        if (options.ffmpegPath.empty()) {
-            const char* env = std::getenv("OKCAM_FFMPEG");
-            options.ffmpegPath = (env && *env) ? env : video_detail::findFfmpeg();
-        }
+        options.ffmpegPath = video_detail::ffmpegPathOrDefault(options.ffmpegPath);
         const bool customSink = static_cast<bool>(options.sinkFactory);
         std::string encoders;
+        bool probePending = false;
+        std::shared_future<std::string> probe;
         if (!customSink) {
             options.sinkFactory = video_detail::defaultSink;
             if (options.codec != "raw") {
-                encoders = video_detail::ffmpegEncoders(options.ffmpegPath);
-                // No silent fallback to raw RGB (~190 MB/s at 1080p30): if the user did not ask for "raw", refuse instead.
-                if (video_detail::resolveCodec(options.codec, encoders) == "raw") {
-                    why = encoders.find("Encoders:") == std::string::npos      // the shell's "not found" message, not ffmpeg's list
-                        ? "ffmpeg not found (looked for \"" + options.ffmpegPath + "\"). Install it, add it to the PATH, or locate it "
-                          "(set OKCAM_FFMPEG); OKCAM_VIDEO_CODEC=raw records uncompressed video."
-                        : "this ffmpeg has no usable '" + options.codec + "' encoder (libx264/mjpeg/ffv1); OKCAM_VIDEO_CODEC=raw records uncompressed video.";
-                    return false;
+                probe = video_detail::encoderProbe(options.ffmpegPath);
+                // Answer at once when the probe is done (warmed up at start-up) or quick; if it is still running (first use
+                // on a slow machine) do not freeze the caller: the writer thread waits for it and reports a problem as the
+                // recording error.
+                if (probe.wait_for(std::chrono::milliseconds(150)) == std::future_status::ready) {
+                    encoders = probe.get();
+                    if (!video_detail::hasEncoderList(encoders)) {          // ffmpeg may have been installed since: look again
+                        probe = video_detail::encoderProbe(options.ffmpegPath, true);
+                        if (probe.wait_for(std::chrono::seconds(10)) == std::future_status::ready) encoders = probe.get();
+                    }
+                    std::string reason;
+                    if (!checkCodec(options, encoders, reason)) { why = reason; return false; }
+                } else {
+                    probePending = true;
                 }
             }
         }
@@ -297,7 +333,9 @@ public:
             m_opt = std::move(options);
             m_dir = dir;
             m_session = session;
-            m_codec = customSink ? m_opt.codec : video_detail::resolveCodec(m_opt.codec, encoders);
+            m_codec = customSink ? m_opt.codec : (probePending ? (m_opt.codec == "auto" ? "h264" : m_opt.codec) : video_detail::resolveCodec(m_opt.codec, encoders));
+            m_probe = probePending ? probe : std::shared_future<std::string>();
+            m_probePending = probePending;
             m_stats = VideoStats();
             m_stats.armed = true;
             m_stats.encoder = m_codec == "raw" ? "raw RGB" : (m_codec + " (ffmpeg)");
@@ -359,6 +397,17 @@ private:
         double hostMs = 0;
     };
 
+    // Whether the encoders ffmpeg offers allow the requested codec. No silent fallback to raw RGB (~190 MB/s at 1080p30): if
+    // the user did not ask for "raw", refuse instead.
+    static bool checkCodec(const VideoRecorderOptions& opt, const std::string& encoders, std::string& why) {
+        if (video_detail::resolveCodec(opt.codec, encoders) != "raw") return true;
+        why = !video_detail::hasEncoderList(encoders)      // the shell's "not found" message, not ffmpeg's list
+            ? "ffmpeg not found (looked for \"" + opt.ffmpegPath + "\"). Install it, add it to the PATH, or locate it "
+              "(set OKCAM_FFMPEG); OKCAM_VIDEO_CODEC=raw records uncompressed video."
+            : "this ffmpeg has no usable '" + opt.codec + "' encoder (libx264/mjpeg/ffv1); OKCAM_VIDEO_CODEC=raw records uncompressed video.";
+        return false;
+    }
+
     void fail(const std::string& why) {
         std::lock_guard<std::mutex> l(m_mx);
         if (m_stats.error.empty()) m_stats.error = why;
@@ -366,6 +415,17 @@ private:
     }
 
     void run() {
+        if (m_probePending) {                       // the ffmpeg probe was still running when recording was armed
+            const std::string enc = m_probe.get();
+            std::string reason;
+            if (!checkCodec(m_opt, enc, reason)) {
+                fail(reason);
+            } else {
+                std::lock_guard<std::mutex> l(m_mx);
+                m_codec = video_detail::resolveCodec(m_opt.codec, enc);
+                m_stats.encoder = m_codec == "raw" ? "raw RGB" : (m_codec + " (ffmpeg)");
+            }
+        }
         std::unique_ptr<IVideoSink> sink;
         int curW = 0, curH = 0, part = -1;
         std::ofstream csv;
@@ -462,6 +522,8 @@ private:
     std::size_t m_queuedBytes = 0;
     VideoRecorderOptions m_opt;
     std::string m_dir, m_session, m_codec;
+    std::shared_future<std::string> m_probe;   // ffmpeg encoder list still being probed (m_probePending)
+    bool m_probePending = false;
     VideoStats m_stats;
     Clock::time_point m_startTime;
     bool m_armed = false, m_stop = false;

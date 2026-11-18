@@ -178,6 +178,34 @@ int main() {
         fs::remove_all(dir);
     }
 
+    // ---- slow ffmpeg probe: start() does not wait for it (the application used to freeze for seconds on Windows) -------------------------
+#ifndef _WIN32
+    {
+        const fs::path dir = tmpDir("slowprobe");
+        auto script = [&](const char* name, const char* encoders) {
+            const fs::path f = dir / name;
+            std::ofstream(f) << "#!/bin/sh\ncase \"$*\" in *-encoders*) sleep 1; echo Encoders:; echo \" V..... " << encoders << "\";;\n*) cat > /dev/null;; esac\n";
+            fs::permissions(f, fs::perms::owner_all);
+            return f.string();
+        };
+        for (const bool good : {true, false}) {
+            VideoRecorder rec;
+            VideoRecorderOptions opt;
+            opt.ffmpegPath = script(good ? "ffgood" : "ffbad", good ? "libx264" : "nothing");
+            std::string why;
+            const auto t0 = std::chrono::steady_clock::now();
+            assert(rec.start((dir / "out").string(), "slow", opt, why));
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            assert(ms < 600);                                  // the probe takes 1 s: start() returned long before
+            for (int i = 0; i < 3; i++) rec.writeFrame(makeFrame(16, 16, i).data(), 16, 16, VideoSync());
+            rec.stop();
+            if (good) assert(rec.stats().error.empty() && rec.stats().framesWritten == 3 && rec.codec() == "h264");
+            else assert(rec.stats().error.find("no usable") != std::string::npos);
+        }
+        fs::remove_all(dir);
+    }
+#endif
+
     // ---- unusable folder / disk-space helper ---------------------------------------------------------------------------------------------------
     {
         VideoRecorder rec;

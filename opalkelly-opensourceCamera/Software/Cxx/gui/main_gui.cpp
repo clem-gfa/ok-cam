@@ -861,6 +861,7 @@ private:
             column->Add(m_recVideoBtn, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
             column->Add(m_recVideoInfo, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
             m_recVideoBtn->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) { toggleVideoRecording(e.IsChecked()); });
+            okcli::prefetchFfmpegProbe(recprefs::read("rec/ffmpeg"));   // slow on Windows: done now, in the background, not when Record is pressed
             m_recTimer = new wxTimer(this);
             Bind(wxEVT_TIMER, [this](wxTimerEvent&) { updateVideoRecordingStatus(); }, m_recTimer->GetId());
 
