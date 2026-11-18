@@ -161,13 +161,22 @@ public:
     DetectionWorker& operator=(const DetectionWorker&) = delete;
 
     void setThreshold(float t) { m_threshold.store(t); }
+    // Upper limit of analysed frames per second (0 = no limit: a new frame as soon as the previous one is done, which
+    // keeps a core busy). A camera shows 30 fps, objects rarely need more than a few updates per second.
+    void setMaxRate(double fps) { m_minIntervalMs.store(fps > 0 ? 1000.0 / fps : 0.0); }
 
-    // Offers a frame. Returns false (and copies nothing) while the previous one is still being analysed: the caller just
+    // Offers a frame. Returns false (and copies nothing) while the previous one is still being analysed or the rate limit is not reached: the caller just
     // tries again with a later frame. Cheap: one memcpy of the image.
     bool submit(const uint8_t* rgb, int w, int h) {
         if (!rgb || w <= 0 || h <= 0) return false;
         std::lock_guard<std::mutex> l(m_mx);
         if (m_pending || m_busy) return false;
+        const auto now = std::chrono::steady_clock::now();
+        if (m_haveSubmitted &&
+            std::chrono::duration<double, std::milli>(now - m_lastSubmit).count() < m_minIntervalMs.load())
+            return false;
+        m_lastSubmit = now;
+        m_haveSubmitted = true;
         m_image.assign(rgb, rgb + std::size_t(w) * h * 3);
         m_w = w;
         m_h = h;
@@ -230,6 +239,9 @@ private:
 
     std::unique_ptr<IObjectDetector> m_detector;
     std::atomic<float> m_threshold{0.25f};
+    std::atomic<double> m_minIntervalMs{200.0};      // default: 5 analyses per second at most
+    std::chrono::steady_clock::time_point m_lastSubmit;
+    bool m_haveSubmitted = false;
     mutable std::mutex m_mx;
     std::condition_variable m_cv;
     std::vector<uint8_t> m_image;

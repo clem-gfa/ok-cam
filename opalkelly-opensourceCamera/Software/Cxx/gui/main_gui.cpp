@@ -819,12 +819,23 @@ private:
             // Object detection (YOLO26n, ONNX Runtime): boxes drawn over the image, not recorded in the video
             m_detectChk = new wxCheckBox(host, wxID_ANY, "Detect objects");
             m_detectInfo = new wxStaticText(host, wxID_ANY, "");
-            column->Add(m_detectChk, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            m_detectRate = new wxChoice(host, wxID_ANY);
+            for (const char* r : {"2 / s", "5 / s", "10 / s", "Max"}) m_detectRate->Append(r);
+            m_detectRate->SetSelection(1);
+            m_detectRate->SetToolTip("Analyses per second: the lower, the less CPU");
+            {
+                auto* row = new wxBoxSizer(wxHORIZONTAL);
+                row->Add(m_detectChk, 1, wxALIGN_CENTRE_VERTICAL);
+                row->Add(m_detectRate, 0, wxALIGN_CENTRE_VERTICAL);
+                column->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+            }
+            m_detectRate->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { applyDetectionRate(); });
             column->Add(m_detectInfo, 0, wxLEFT | wxRIGHT, FromDIP(16));
 #ifdef OKCAM_WITH_ONNX
             m_detectChk->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) { setObjectDetection(e.IsChecked()); });
 #else
             m_detectChk->Enable(false);
+            m_detectRate->Enable(false);
             m_detectInfo->SetLabel("Not available: built without ONNX Runtime");
 #endif
             m_recVideoLine = new wxStaticLine(host);
@@ -1351,6 +1362,7 @@ private:
         if (on) {
             try {
                 m_detector = std::make_unique<okcli::DetectionWorker>(std::make_unique<okcli::OnnxYoloDetector>(yoloModelPath()));
+                applyDetectionRate();
                 m_detectInfo->SetLabel("Loading...");
             } catch (const std::exception& e) {
                 m_detectChk->SetValue(false);
@@ -1362,6 +1374,11 @@ private:
         (void)on;
 #endif
         relayoutSidebar();
+    }
+    void applyDetectionRate() {
+        static const double kRates[] = {2, 5, 10, 0};     // 0 = no limit
+        const int i = m_detectRate ? m_detectRate->GetSelection() : 1;
+        if (m_detector) m_detector->setMaxRate(kRates[(i >= 0 && i < 4) ? i : 1]);
     }
     // Called with every displayed frame: hands it to the detection thread when that is idle and shows its newest result.
     void updateDetection(const GuiCameraBackend::Frame& f) {
@@ -1486,6 +1503,7 @@ private:
     std::shared_ptr<okcli::RecordingSettings> m_recSettings = recprefs::load();
     wxTextCtrl* m_recPrefix = nullptr;
     wxCheckBox* m_detectChk = nullptr;
+    wxChoice* m_detectRate = nullptr;
     wxStaticText* m_detectInfo = nullptr;
     std::unique_ptr<okcli::DetectionWorker> m_detector;   // alive while "Detect objects" is ticked
     uint64_t m_detSeq = 0;

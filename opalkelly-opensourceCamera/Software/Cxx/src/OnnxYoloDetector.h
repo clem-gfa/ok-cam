@@ -31,7 +31,10 @@ namespace okcli {
 class OnnxYoloDetector : public IObjectDetector {
 public:
     // `modelPath`: UTF-8 path of the .onnx file. Throws std::runtime_error (with a readable reason) if it cannot be used.
-    explicit OnnxYoloDetector(const std::string& modelPath, int intraOpThreads = 0)
+    // `intraOpThreads`: threads used by one inference (default 1: measured on a 320 x 320 YOLO26n, 2 or 4 threads do not
+    // shorten it but use 1.4x / 2x the CPU time); 0 = all cores. Idle threads sleep instead of spinning ("allow_spinning" off): spinning keeps
+    // the cores at 100 % between two inferences for a few percent of latency.
+    explicit OnnxYoloDetector(const std::string& modelPath, int intraOpThreads = 1)
         : m_env(ORT_LOGGING_LEVEL_WARNING, "okcam") {
         try {
             const std::filesystem::path path = std::filesystem::u8path(modelPath);
@@ -39,6 +42,9 @@ public:
             Ort::SessionOptions opts;
             opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
             if (intraOpThreads > 0) opts.SetIntraOpNumThreads(intraOpThreads);
+            opts.SetInterOpNumThreads(1);
+            opts.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+            opts.AddConfigEntry("session.intra_op.allow_spinning", "0");
             m_session = std::make_unique<Ort::Session>(m_env, path.c_str(), opts);
             Ort::AllocatorWithDefaultOptions alloc;
             m_inputName = m_session->GetInputNameAllocated(0, alloc).get();

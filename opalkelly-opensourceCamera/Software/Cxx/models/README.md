@@ -31,3 +31,9 @@ côté de l'exécutable et le modèle dans `models/`. Testé avec ONNX Runtime 1
 
 Vérification sans l'interface : `tests/onnx_detect_check.cpp` (image RGB brute -> boîtes, à comparer avec Ultralytics ; sur l'image
 d'exemple `bus.jpg` les 5 boîtes coïncident à moins d'un pixel, ~14 ms par image sur un CPU de serveur).
+
+## CPU utilisée
+
+Par défaut : 1 thread d'inférence, threads inactifs endormis (pas d'attente active) et 5 analyses par seconde au plus (liste
+« 2 / 5 / 10 / Max » à côté de « Detect objects »). Mesuré sur `bus.jpg` : 14,7 ms de CPU par analyse avec 1 thread, contre 20 ms avec
+2 threads et 31 ms avec tous les cœurs, pour la même latence ; à 5 / s cela fait ~7 % d'un cœur.

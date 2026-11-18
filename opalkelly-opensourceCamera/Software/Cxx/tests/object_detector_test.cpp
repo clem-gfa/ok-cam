@@ -69,6 +69,7 @@ int main() {
         auto fake = std::make_unique<Fake>(); fake->calls = &calls; fake->slow = &slow; fake->fail = &fail;
         DetectionWorker w(std::move(fake));
         w.setThreshold(0.5f);
+        w.setMaxRate(0);
         const std::vector<uint8_t> img(8 * 4 * 3, 7);
         assert(w.latest().sequence == 0);
         assert(w.submit(img.data(), 8, 4));
@@ -84,6 +85,29 @@ int main() {
         fail = false;
         for (int i = 0; i < 100 && w.latest().sequence < 2; i++) { w.submit(img.data(), 8, 4); std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
         assert(w.latest().sequence >= 2 && w.error().empty());
+    }
+    // ---- rate limit: no more than ~10 analyses per second however often frames are offered
+    {
+        struct Quick : IObjectDetector {
+            std::atomic<int>* calls;
+            std::vector<Detection> detect(const uint8_t*, int, int, float) override { (*calls)++; return {}; }
+        };
+        std::atomic<int> calls{0};
+        auto q = std::make_unique<Quick>(); q->calls = &calls;
+        DetectionWorker w(std::move(q));
+        w.setMaxRate(10);
+        const std::vector<uint8_t> img(4 * 4 * 3, 1);
+        const auto t0 = std::chrono::steady_clock::now();
+        int accepted = 0;
+        while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(550)) {
+            if (w.submit(img.data(), 4, 4)) accepted++;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        assert(accepted >= 4 && accepted <= 7);       // ~6 in 550 ms at 10 fps (never 500)
+        w.setMaxRate(0);
+        int n = 0;
+        for (int i = 0; i < 200; i++) { if (w.submit(img.data(), 4, 4)) n++; std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+        assert(n > 50);                                // unlimited: nearly every offer is taken
     }
     std::cout << "TOUS LES TESTS OK\n";
     return 0;
