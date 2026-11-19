@@ -184,6 +184,143 @@ int main() {
         assert(cap2.recentFrames(2048, tmp.data(), &end) == (NP - 42) * NS);                // 38 packets after the gap
         assert(cap2.stats().lostPackets == 2);
     }
+    // ---- baseline: the sound of the environment is subtracted, a new (even weaker) source shows alone -------------------------------------------------
+    {
+        struct Src { double xn, yn, amp; std::vector<double> freqs; };
+        const AcousticSettings s;
+        const auto geo = darwinMicGeometry();
+        const double tx = std::tan(s.hfovDeg * acoustic_detail::kPi / 360.0), ty = tx / s.aspect;
+        auto make = [&](const std::vector<Src>& srcs, unsigned seed, std::size_t start) {
+            std::mt19937 rng(seed);
+            std::normal_distribution<double> noise(0.0, 150000.0);
+            std::vector<int32_t> out(Beamformer::kFramesNeeded * 64);
+            for (std::size_t i = 0; i < Beamformer::kFramesNeeded; i++)
+                for (int m = 0; m < 64; m++) {
+                    double v = noise(rng);
+                    for (const Src& sr : srcs) {
+                        double dx = sr.xn * tx, dy = sr.yn * ty; const double nr = std::sqrt(dx * dx + dy * dy + 1); dx /= nr; dy /= nr;
+                        const double t = double(start + i) / FS + (geo[std::size_t(m)].x * dx + geo[std::size_t(m)].y * dy) * 1e-3 / C;
+                        for (std::size_t k = 0; k < sr.freqs.size(); k++) v += sr.amp * std::sin(2 * acoustic_detail::kPi * sr.freqs[k] * t + double(k));
+                    }
+                    out[i * 64 + std::size_t(m)] = int32_t(std::lround(v));
+                }
+            return out;
+        };
+        const Src loud{-0.5, 0.2, 400000.0, {9100, 10900, 13300, 15700, 17900}};      // a fan, always there
+        const Src weak{0.6, -0.3, 200000.0, {9700, 11500, 14100, 16300, 18700}};      // the new source, 6 dB weaker
+        Beamformer bf(FS);
+        AcousticBaseline base;
+        base.valid = true; base.settings = s; base.count = 12;
+        for (int i = 0; i < 12; i++) {                                                // 12 realisations of the environment
+            const auto sig = make({loud}, 100 + unsigned(i), std::size_t(i) * 777);
+            AcousticMap m; assert(bf.compute(sig.data(), Beamformer::kFramesNeeded, s, m));
+            if (base.power.empty()) { base.power.assign(m.power.size(), 0.0f); base.w = m.w; base.h = m.h; }
+            for (std::size_t k = 0; k < m.power.size(); k++) base.power[k] += m.power[k] / 12.0f;
+        }
+        int ax, ay, bx, by; cellOf(-0.5, 0.2, s, ax, ay); cellOf(0.6, -0.3, s, bx, by);
+        // the environment alone: blank map
+        {
+            const auto sig = make({loud}, 999, 5000);
+            AcousticMap live, out; bf.compute(sig.data(), Beamformer::kFramesNeeded, s, live);
+            subtractBaseline(live, base, 3.0, out);
+            std::cout << "environment alone: empty=" << out.empty << " (raw map peaks at " << live.peakX << ", " << live.peakY << ")\n";
+            assert(out.empty && out.baselineApplied);
+        }
+        // the environment + a new weaker source: without baseline the fan wins, with it the new source is found
+        {
+            const auto sig = make({loud, weak}, 1001, 9000);
+            AcousticMap live, out; bf.compute(sig.data(), Beamformer::kFramesNeeded, s, live);
+            subtractBaseline(live, base, 3.0, out);
+            std::cout << "raw peak (" << live.peakX << ", " << live.peakY << ") fan at (" << ax << ", " << ay << "); with baseline (" << out.peakX << ", "
+                      << out.peakY << ") new source at (" << bx << ", " << by << "), snr " << out.snrDb << " dB\n";
+            assert(std::abs(live.peakX - ax) <= 1 && std::abs(live.peakY - ay) <= 1);                 // raw: the loud one
+            assert(!out.empty && std::abs(out.peakX - bx) <= 2 && std::abs(out.peakY - by) <= 2);     // baseline: the new one
+            assert(out.snrDb > 3.0f && out.db[std::size_t(out.peakY) * out.w + out.peakX] == 0.0f);
+        }
+        // a baseline of other settings is refused by the comparison, an invalid one leaves the map unchanged
+        AcousticSettings other = s; other.fHi = 25000;
+        assert(sameBeamSettings(s, s) && !sameBeamSettings(s, other));
+        AcousticSettings fl = s; fl.flipX = true;
+        assert(!sameBeamSettings(s, fl));
+        AcousticBaseline none; AcousticMap live, out;
+        const auto sig = make({weak}, 5, 0); bf.compute(sig.data(), Beamformer::kFramesNeeded, s, live);
+        subtractBaseline(live, none, 3.0, out);
+        assert(!out.baselineApplied && out.peakX == live.peakX && out.power == live.power);
+    }
+    // ---- worker with a baseline: capture on the live stream, subtraction, discarded when a setting changes ---------------------------------------------
+    {
+        struct Pipe : IAudioPipe {
+            std::deque<std::vector<uint8_t>> q;
+            uint32_t available() override { return uint32_t(q.size() * kAudioPacketBytes / 4); }
+            void read(uint8_t* b, std::size_t n) override {
+                for (std::size_t i = 0; i < n / kAudioPacketBytes; i++) { std::memcpy(b + i * kAudioPacketBytes, q.front().data(), kAudioPacketBytes); q.pop_front(); }
+            }
+        } pipe;
+        AcousticSettings s;
+        const auto geo = darwinMicGeometry();
+        const double tx = std::tan(s.hfovDeg * acoustic_detail::kPi / 360.0), ty = tx / s.aspect;
+        AudioCaptureOptions opt; opt.keepRaw = true; opt.rawFrames = 4096; opt.ringFrames = 8192;
+        auto cap = std::make_shared<AudioCapture>(pipe, opt);
+        cap->reset();
+        std::size_t seq = 0;
+        std::mt19937 rng(7);
+        std::normal_distribution<double> noise(0.0, 150000.0);
+        auto feed = [&](bool withNew, int packets) {                  // 21 frames per packet, continuous in time
+            for (int q = 0; q < packets; q++, seq++) {
+                std::vector<uint8_t> p(kAudioPacketBytes, 0);
+                auto put32 = [&](std::size_t w, uint32_t x) { for (int i = 0; i < 4; i++) p[4 * w + std::size_t(i)] = uint8_t(x >> (8 * i)); };
+                put32(0, kAudioMagic); put32(1, uint32_t(seq)); put32(4, 21);
+                for (std::size_t i = 0; i < 21; i++)
+                    for (int m = 0; m < 64; m++) {
+                        double v = noise(rng);
+                        const double fan[] = {9100, 10900, 13300, 15700}, nw[] = {9700, 11500, 14100, 16300};
+                        for (int k = 0; k < 2; k++) {
+                            const double xs[2] = {-0.5, 0.6}, ys[2] = {0.2, -0.3}, amp[2] = {400000.0, 250000.0};
+                            if (k == 1 && !withNew) continue;
+                            double dx = xs[k] * tx, dy = ys[k] * ty; const double nr = std::sqrt(dx * dx + dy * dy + 1); dx /= nr; dy /= nr;
+                            const double t = double(seq * 21 + i) / FS + (geo[std::size_t(m)].x * dx + geo[std::size_t(m)].y * dy) * 1e-3 / C;
+                            for (int f = 0; f < 4; f++) v += amp[k] * std::sin(2 * acoustic_detail::kPi * (k ? nw[f] : fan[f]) * t + f);
+                        }
+                        const uint32_t u = uint32_t(int32_t(std::lround(v))) & 0xFFFFFF;
+                        uint8_t* d = &p[32 + i * 192 + std::size_t(m) * 3];
+                        d[0] = uint8_t(u); d[1] = uint8_t(u >> 8); d[2] = uint8_t(u >> 16);
+                    }
+                pipe.q.push_back(std::move(p));
+            }
+            while (cap->pump() > 0) {}
+        };
+        feed(false, 60);
+        AcousticWorker w(cap);
+        w.setRate(100);
+        w.setSettings(s);
+        w.captureBaseline(6);
+        auto waitFor = [&](bool withNew, auto cond) {
+            for (int i = 0; i < 400 && !cond(); i++) { feed(withNew, 12); std::this_thread::sleep_for(std::chrono::milliseconds(25)); }
+            return cond();
+        };
+        assert(waitFor(false, [&] { return w.baselineState().valid; }));
+        assert(!w.baselineState().capturing && w.baselineState().discarded == false);
+        w.setSubtract(true, 3.0);
+        // environment alone: blank
+        const uint64_t s0 = w.latest().sequence;
+        assert(waitFor(false, [&] { const AcousticMap m = w.latest(); return m.sequence > s0 + 2 && m.baselineApplied; }));
+        assert(w.latest().empty);
+        // a new source: found, even though the fan is louder
+        assert(waitFor(true, [&] { const AcousticMap m = w.latest(); return m.baselineApplied && !m.empty; }));
+        {
+            const AcousticMap m = w.latest();
+            int bx, by; cellOf(0.6, -0.3, s, bx, by);
+            std::cout << "worker with baseline: peak (" << m.peakX << ", " << m.peakY << "), new source at (" << bx << ", " << by << ")\n";
+            assert(std::abs(m.peakX - bx) <= 2 && std::abs(m.peakY - by) <= 2);
+        }
+        // changing a setting discards the baseline: the raw map comes back
+        AcousticSettings s2 = s; s2.fHi = 24000;
+        w.setSettings(s2);
+        assert(waitFor(true, [&] { return !w.baselineState().valid && w.baselineState().discarded; }));
+        assert(waitFor(true, [&] { return !w.latest().baselineApplied; }));
+        w.clearBaseline();
+        assert(!w.baselineState().valid && !w.baselineState().discarded);
+    }
     std::cout << "TOUS LES TESTS OK\n";
     return 0;
 }

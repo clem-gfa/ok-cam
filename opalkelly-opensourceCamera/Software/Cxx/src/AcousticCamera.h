@@ -106,6 +106,11 @@ struct AcousticMap {
     float azimuthDeg = 0, elevationDeg = 0;   // direction of the maximum: azimuth + to the right, elevation + up
     float contrastDb = 0;                // maximum over the median of the map: how much a source stands out (0 = diffuse sound)
     float levelDb = -200;                // mean power per microphone in the band, dB re full scale (24 bit) squared
+    std::vector<float> power;            // w * h, linear power (arbitrary but constant unit: what the baseline is made of)
+    float tanX = 0, tanY = 0;            // tangents of the half fields of view the grid spans
+    bool baselineApplied = false;        // the map shows what exceeds the baseline (see AcousticBaseline)
+    bool empty = false;                  // nothing above the baseline (or no signal): the map is blank
+    float snrDb = 0;                     // with a baseline: the live maximum over the baseline at the same place, dB
     double computeMs = 0;
     uint64_t sequence = 0;
     uint64_t endFrame = 0;               // audio frames received when this map was computed
@@ -136,6 +141,31 @@ inline void fft(float* re, float* im, int n) {
             }
         }
     }
+}
+
+// From map.power: dB relative to the maximum, cell and direction of the maximum, contrast. Blank when the power is all zero.
+inline void finishMap(AcousticMap& m) {
+    const std::size_t n = m.power.size();
+    m.db.assign(n, -60.0f);
+    m.empty = false;
+    std::size_t best = 0;
+    for (std::size_t i = 1; i < n; i++) if (m.power[i] > m.power[best]) best = i;
+    const float pmax = n ? m.power[best] : 0.0f;
+    if (n == 0 || !(pmax > 0.0f)) {
+        m.empty = true;
+        m.peakX = m.w / 2; m.peakY = m.h / 2;
+        m.azimuthDeg = m.elevationDeg = 0; m.contrastDb = 0;
+        return;
+    }
+    for (std::size_t i = 0; i < n; i++) m.db[i] = std::max(-60.0f, 10.0f * std::log10(std::max(m.power[i], 1e-30f) / pmax));
+    m.peakX = int(best % std::size_t(m.w));
+    m.peakY = int(best / std::size_t(m.w));
+    std::vector<float> sorted(m.db);
+    std::nth_element(sorted.begin(), sorted.begin() + std::ptrdiff_t(sorted.size() / 2), sorted.end());
+    m.contrastDb = -sorted[sorted.size() / 2];
+    const double pdx = ((m.peakX + 0.5) / m.w * 2 - 1) * m.tanX, pdy = ((m.peakY + 0.5) / m.h * 2 - 1) * m.tanY;
+    m.azimuthDeg = float(std::atan(pdx) * 180.0 / kPi);
+    m.elevationDeg = float(-std::atan(pdy / std::sqrt(pdx * pdx + 1.0)) * 180.0 / kPi);
 }
 }  // namespace acoustic_detail
 
@@ -220,19 +250,10 @@ public:
                 power[std::size_t(gy) * s.gridW + gx] = acc;
             }
 
-        std::size_t best = 0;
-        for (std::size_t i = 1; i < power.size(); i++) if (power[i] > power[best]) best = i;
-        const float pmax = std::max(power[best], 1e-30f);
-        out.db.resize(power.size());
-        for (std::size_t i = 0; i < power.size(); i++) out.db[i] = std::max(-60.0f, 10.0f * std::log10(std::max(power[i], 1e-30f) / pmax));
-        out.peakX = int(best % std::size_t(s.gridW));
-        out.peakY = int(best / std::size_t(s.gridW));
-        std::vector<float> sorted(out.db);
-        std::nth_element(sorted.begin(), sorted.begin() + std::ptrdiff_t(sorted.size() / 2), sorted.end());
-        out.contrastDb = -sorted[sorted.size() / 2];
-        const double pdx = ((out.peakX + 0.5) / s.gridW * 2 - 1) * tx, pdy = ((out.peakY + 0.5) / s.gridH * 2 - 1) * ty;
-        out.azimuthDeg = float(std::atan(pdx) * 180.0 / acoustic_detail::kPi);
-        out.elevationDeg = float(-std::atan(pdy / std::sqrt(pdx * pdx + 1.0)) * 180.0 / acoustic_detail::kPi);
+        out.power = std::move(power);
+        out.tanX = float(tx); out.tanY = float(ty);
+        out.baselineApplied = false; out.snrDb = 0;
+        acoustic_detail::finishMap(out);
         // mean power per microphone and bin, from the window-compensated spectra (Hann: sum w^2 = 3/8 N), dB re (2^23)^2
         const double perMic = levelSum / (double(nseg) * nb * M) / (0.375 * kFft * kFft) * 2.0;
         out.levelDb = float(10.0 * std::log10(std::max(perMic / (8388608.0 * 8388608.0), 1e-30)));
@@ -265,6 +286,41 @@ inline std::vector<uint8_t> colorizeMap(const AcousticMap& m, double rangeDb) {
     return rgba;
 }
 
+// ---- baseline: the sound of the environment ------------------------------------------------------------------------------------
+
+// Average beamformed power of the environment alone (fans, ventilation, a machine that is always there...), per direction. It is
+// only valid for the settings it was measured with (band, field of view, grid, flips): changing one discards it.
+struct AcousticBaseline {
+    bool valid = false;
+    AcousticSettings settings;
+    int w = 0, h = 0;
+    int count = 0;                       // maps averaged
+    std::vector<float> power;
+};
+
+inline bool sameBeamSettings(const AcousticSettings& a, const AcousticSettings& b) {
+    return a.fLo == b.fLo && a.fHi == b.fHi && a.hfovDeg == b.hfovDeg && a.aspect == b.aspect && a.gridW == b.gridW &&
+           a.gridH == b.gridH && a.speedOfSound == b.speedOfSound && a.flipX == b.flipX && a.flipY == b.flipY;
+}
+
+// What the live map has in excess of the baseline: power - k * baseline (k = margin, e.g. 3 dB = 2x), negative parts cut. A map
+// of the environment alone gives a blank map (empty); a new source shows alone, even if a louder one was already there.
+inline void subtractBaseline(const AcousticMap& live, const AcousticBaseline& base, double marginDb, AcousticMap& out) {
+    out = live;
+    if (!base.valid || base.power.size() != live.power.size()) return;
+    const float k = float(std::pow(10.0, marginDb / 10.0));
+    std::size_t lp = 0;
+    for (std::size_t i = 1; i < live.power.size(); i++) if (live.power[i] > live.power[lp]) lp = i;
+    for (std::size_t i = 0; i < out.power.size(); i++) out.power[i] = std::max(0.0f, live.power[i] - k * base.power[i]);
+    acoustic_detail::finishMap(out);
+    out.baselineApplied = true;
+    // how far the strongest place of the excess is above the environment there
+    std::size_t ep = 0;
+    for (std::size_t i = 1; i < out.power.size(); i++) if (out.power[i] > out.power[ep]) ep = i;
+    out.snrDb = float(10.0 * std::log10(std::max(live.power[ep], 1e-30f) / std::max(base.power[ep], 1e-30f)));
+    (void)lp;
+}
+
 // ---- background worker ----------------------------------------------------------------------------------------------------
 
 class AcousticWorker {
@@ -284,6 +340,42 @@ public:
     AcousticWorker& operator=(const AcousticWorker&) = delete;
 
     void setSettings(const AcousticSettings& s) { std::lock_guard<std::mutex> l(m_mx); m_settings = s; }
+
+    // Baseline: averages the next `maps` maps (make sure only the environment sounds meanwhile). Needs the same settings until done.
+    void captureBaseline(int maps = 12) {
+        std::lock_guard<std::mutex> l(m_mx);
+        m_capTotal = std::max(1, maps);
+        m_capCount = 0;
+        m_capSettings = m_settings;
+        m_capSum.clear();
+        m_baseDiscarded = false;
+    }
+    void clearBaseline() {
+        std::lock_guard<std::mutex> l(m_mx);
+        m_base = AcousticBaseline();
+        m_capTotal = 0;
+        m_baseDiscarded = false;
+    }
+    // With a valid baseline: publish what exceeds it (margin in dB) instead of the raw map.
+    void setSubtract(bool on, double marginDb) {
+        std::lock_guard<std::mutex> l(m_mx);
+        m_subtract = on;
+        m_marginDb = marginDb;
+    }
+    struct BaselineState {
+        bool valid = false, capturing = false, discarded = false;
+        int collected = 0, total = 0;
+    };
+    BaselineState baselineState() const {
+        std::lock_guard<std::mutex> l(m_mx);
+        BaselineState b;
+        b.valid = m_base.valid;
+        b.capturing = m_capTotal > 0;
+        b.discarded = m_baseDiscarded;
+        b.collected = m_capCount;
+        b.total = m_capTotal;
+        return b;
+    }
     void setRate(double hz) { std::lock_guard<std::mutex> l(m_mx); m_intervalMs = hz > 0 ? 1000.0 / hz : 0.0; m_cv.notify_all(); }
     AcousticMap latest() const { std::lock_guard<std::mutex> l(m_mx); return m_map; }
     // "" when computing; otherwise why nothing is computed (no continuous audio yet...).
@@ -315,8 +407,33 @@ private:
                     lastEnd = end;
                     map.endFrame = end;
                     std::lock_guard<std::mutex> l(m_mx);
-                    map.sequence = m_map.sequence + 1;
-                    m_map = std::move(map);
+                    // baseline capture in progress: average the raw powers
+                    if (m_capTotal > 0) {
+                        if (!sameBeamSettings(m_capSettings, s)) {            // a setting changed meanwhile: start over
+                            m_capSettings = s;
+                            m_capCount = 0;
+                            m_capSum.clear();
+                        }
+                        if (m_capSum.empty()) m_capSum.assign(map.power.size(), 0.0);
+                        for (std::size_t i = 0; i < map.power.size() && i < m_capSum.size(); i++) m_capSum[i] += map.power[i];
+                        if (++m_capCount >= m_capTotal) {
+                            m_base.valid = true;
+                            m_base.settings = s;
+                            m_base.w = map.w; m_base.h = map.h; m_base.count = m_capCount;
+                            m_base.power.resize(m_capSum.size());
+                            for (std::size_t i = 0; i < m_capSum.size(); i++) m_base.power[i] = float(m_capSum[i] / m_capCount);
+                            m_capTotal = 0;
+                            m_baseDiscarded = false;
+                        }
+                    }
+                    if (m_base.valid && !sameBeamSettings(m_base.settings, s)) {   // measured with other settings: no longer usable
+                        m_base.valid = false;
+                        m_baseDiscarded = true;
+                    }
+                    const uint64_t seq = m_map.sequence + 1;
+                    if (m_subtract && m_base.valid) subtractBaseline(map, m_base, m_marginDb, m_map);
+                    else m_map = std::move(map);
+                    m_map.sequence = seq;
                 } else {
                     status = "band outside the analysable range";
                 }
@@ -335,6 +452,12 @@ private:
     AcousticSettings m_settings;
     double m_intervalMs = 200;            // 5 maps per second
     AcousticMap m_map;
+    AcousticBaseline m_base;
+    bool m_subtract = false, m_baseDiscarded = false;
+    double m_marginDb = 3.0;
+    int m_capTotal = 0, m_capCount = 0;
+    AcousticSettings m_capSettings;
+    std::vector<double> m_capSum;
     std::string m_status;
     bool m_stop = false;
     std::thread m_thread;

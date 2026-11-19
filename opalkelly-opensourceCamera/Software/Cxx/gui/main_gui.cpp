@@ -837,6 +837,19 @@ private:
             m_acFlipY->SetToolTip("Tick if a source at the top of the image appears at the bottom");
             m_acFov = new wxSpinCtrlDouble(host, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 20.0, 140.0, 62.2, 0.5);
             m_acFov->SetToolTip("Horizontal field of view of the camera in degrees (IMX219: 62.2)");
+            m_acBaseBtn = new wxButton(host, wxID_ANY, "Baseline");
+            m_acBaseBtn->SetToolTip("Measure the sound of the environment for ~2.5 s (only the usual noise: fans, ventilation...). Afterwards only what exceeds it is shown.");
+            m_acBaseClear = new wxButton(host, wxID_ANY, "Clear");
+            m_acSub = new wxCheckBox(host, wxID_ANY, "subtract");
+            m_acSub->SetToolTip("Show only what exceeds the baseline (a blank map = nothing new)");
+            m_acMargin = new wxChoice(host, wxID_ANY);
+            for (const char* r : {"+1 dB", "+3 dB", "+6 dB"}) m_acMargin->Append(r);
+            m_acMargin->SetSelection(1);
+            m_acMargin->SetToolTip("A direction must exceed the baseline by this margin to appear: the higher, the fewer false alarms from fluctuating noise");
+            m_acBaseBtn->Enable(false);
+            m_acBaseClear->Enable(false);
+            m_acSub->Enable(false);
+            m_acMargin->Enable(false);
             m_acInfo = new wxStaticText(host, wxID_ANY, "");
             {
                 auto* row = new wxBoxSizer(wxHORIZONTAL);
@@ -851,8 +864,22 @@ private:
                 row3->Add(m_acFlipX, 0, wxRIGHT, FromDIP(10));
                 row3->Add(m_acFlipY, 0);
                 column->Add(row3, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
+                auto* row4 = new wxBoxSizer(wxHORIZONTAL);
+                row4->Add(m_acBaseBtn, 0, wxRIGHT, FromDIP(6));
+                row4->Add(m_acBaseClear, 0, wxRIGHT, FromDIP(6));
+                row4->Add(m_acSub, 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, FromDIP(6));
+                row4->Add(m_acMargin, 0, wxALIGN_CENTRE_VERTICAL);
+                column->Add(row4, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
                 column->Add(m_acInfo, 0, wxLEFT | wxRIGHT, FromDIP(16));
             }
+            m_acBaseBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                if (m_acoustic) { m_acoustic->captureBaseline(12); m_acSeq = 0; m_acWasCapturing = true; }
+            });
+            m_acBaseClear->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                if (m_acoustic) { m_acoustic->clearBaseline(); m_acSub->SetValue(false); applyAcousticSubtract(); }
+            });
+            m_acSub->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { applyAcousticSubtract(); });
+            m_acMargin->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { applyAcousticSubtract(); });
             m_acChk->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) { setAcousticCamera(e.IsChecked()); });
             for (wxChoice* c : {m_acBand, m_acRange}) c->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { applyAcousticSettings(); });
             for (wxCheckBox* c : {m_acFlipX, m_acFlipY}) c->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { applyAcousticSettings(); });
@@ -1448,8 +1475,17 @@ private:
         if (m_acoustic) m_acoustic->setSettings(acousticSettings());
         m_acSeq = 0;                       // redraw the current map with the new range
     }
+    void applyAcousticSubtract() {
+        static const double kMargins[] = {1.0, 3.0, 6.0};
+        const int i = m_acMargin ? m_acMargin->GetSelection() : 1;
+        if (m_acoustic) m_acoustic->setSubtract(m_acSub && m_acSub->GetValue(), kMargins[(i >= 0 && i < 3) ? i : 1]);
+        m_acSeq = 0;
+    }
     void setAcousticCamera(bool on) {
         m_acoustic.reset();
+        m_acWasCapturing = false;
+        for (wxControl* c : std::initializer_list<wxControl*>{m_acBaseBtn, m_acBaseClear, m_acSub, m_acMargin}) c->Enable(false);
+        m_acSub->SetValue(false);
         m_acSeq = 0;
         m_viewport->ClearOverlay();
         m_acInfo->SetLabel("");
@@ -1462,6 +1498,9 @@ private:
             } else {
                 m_acoustic = std::make_unique<okcli::AcousticWorker>(audio);
                 applyAcousticSettings();
+                applyAcousticSubtract();
+                m_acBaseBtn->Enable(true);
+                m_acMargin->Enable(true);
                 m_acInfo->SetLabel("Computing...");
             }
         }
@@ -1476,6 +1515,22 @@ private:
             m_acInfo->SetLabel("Microphones stopped.");
             return;
         }
+        // baseline state: measuring / ready / discarded
+        const auto bs = m_acoustic->baselineState();
+        if (bs.valid && m_acWasCapturing) {                      // just measured: show what exceeds it right away
+            m_acWasCapturing = false;
+            m_acSub->SetValue(true);
+            applyAcousticSubtract();
+        }
+        m_acBaseClear->Enable(bs.valid || bs.capturing);
+        m_acSub->Enable(bs.valid);
+        m_acBaseBtn->Enable(!bs.capturing);
+        if (bs.discarded && !bs.valid && m_acSub->GetValue()) { m_acSub->SetValue(false); applyAcousticSubtract(); }
+        wxString base;
+        if (bs.capturing) base = wxString::Format("Baseline: measuring %d/%d... ", bs.collected, bs.total);
+        else if (bs.discarded) base = "Baseline discarded (a setting changed): measure it again. ";
+        else if (bs.valid) base = m_acSub->GetValue() ? "Baseline subtracted. " : "Baseline measured. ";
+
         const okcli::AcousticMap m = m_acoustic->latest();
         if (m.sequence == 0) {
             const std::string st = m_acoustic->status();
@@ -1486,10 +1541,18 @@ private:
         m_acSeq = m.sequence;
         m_viewport->SetOverlay(okcli::colorizeMap(m, acousticRangeDb()), m.w, m.h);
         const double xn = (m.peakX + 0.5) / m.w * 2 - 1, yn = (m.peakY + 0.5) / m.h * 2 - 1;
-        // the marker only when the source stands out of a diffuse sound
-        m_viewport->SetOverlayMarker(m.contrastDb > 3.0f, xn, yn, wxString::Format("%+.0f / %+.0f deg", m.azimuthDeg, m.elevationDeg));
-        m_acInfo->SetLabel(wxString::Format("az %+.1f deg, el %+.1f deg | contrast %.0f dB | level %.0f dB | %.0f ms",
-                                            m.azimuthDeg, m.elevationDeg, m.contrastDb, m.levelDb, m.computeMs));
+        // the marker: with a baseline as soon as something exceeds it, otherwise when the maximum stands out of a diffuse sound
+        const bool mark = m.baselineApplied ? !m.empty : m.contrastDb > 3.0f;
+        wxString label = wxString::Format("%+.0f / %+.0f deg", m.azimuthDeg, m.elevationDeg);
+        if (m.baselineApplied) label += wxString::Format("  %+.0f dB", m.snrDb);
+        m_viewport->SetOverlayMarker(mark, xn, yn, label);
+        if (m.baselineApplied && m.empty)
+            m_acInfo->SetLabel(base + "Nothing above the baseline.");
+        else if (m.baselineApplied)
+            m_acInfo->SetLabel(base + wxString::Format("az %+.1f deg, el %+.1f deg | %+.0f dB over the baseline | %.0f ms", m.azimuthDeg, m.elevationDeg, m.snrDb, m.computeMs));
+        else
+            m_acInfo->SetLabel(base + wxString::Format("az %+.1f deg, el %+.1f deg | contrast %.0f dB | level %.0f dB | %.0f ms", m.azimuthDeg, m.elevationDeg,
+                                                       m.contrastDb, m.levelDb, m.computeMs));
         m_acInfo->Wrap(FromDIP(260));
     }
 
@@ -1660,6 +1723,10 @@ private:
     wxCheckBox *m_acFlipX = nullptr, *m_acFlipY = nullptr;
     wxSpinCtrlDouble* m_acFov = nullptr;
     wxStaticText* m_acInfo = nullptr;
+    wxButton *m_acBaseBtn = nullptr, *m_acBaseClear = nullptr;
+    wxCheckBox* m_acSub = nullptr;
+    wxChoice* m_acMargin = nullptr;
+    bool m_acWasCapturing = false;
     std::unique_ptr<okcli::AcousticWorker> m_acoustic;      // alive while "Acoustic camera" is ticked
     uint64_t m_acSeq = 0;
     double m_acAspect = 16.0 / 9.0;
