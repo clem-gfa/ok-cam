@@ -31,6 +31,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -380,6 +381,51 @@ public:
             const std::size_t o = ((start + i) % m_peakBlocks) * kAudioChannels + channel;
             outMin[i] = m_peakMin[o];
             outMax[i] = m_peakMax[o];
+        }
+        return n;
+    }
+
+    // The display in one call: min/max of the last `blocks` peak blocks, reduced to `cols` columns (column i covers blocks
+    // [i*n/cols, (i+1)*n/cols) of the n = min(blocks, available) blocks, at least one), for all channels: outMin/outMax are
+    // kAudioChannels x cols values, channel-major. Returns n (0 = nothing yet). Scans the blocks in memory order (all channels
+    // of a block are contiguous) in slices, so a window of seconds costs a few ms and never holds the lock long.
+    std::size_t windowPeaks(std::size_t blocks, std::size_t cols, int32_t* outMin, int32_t* outMax) const {
+        if (cols == 0) return 0;
+        std::size_t n = 0, start = 0;
+        {
+            std::lock_guard<std::mutex> l(m_mx);
+            n = std::min(blocks, m_peakFill);
+            start = (m_peakHead + m_peakBlocks - n) % m_peakBlocks;
+        }
+        if (n == 0) return 0;
+        const std::size_t total = std::size_t(kAudioChannels) * cols;
+        std::fill(outMin, outMin + total, INT32_MAX);
+        std::fill(outMax, outMax + total, INT32_MIN);
+        constexpr std::size_t kSlice = 2048;                  // blocks scanned per lock
+        // column c covers blocks [c*n/cols, (c+1)*n/cols); with n < cols a block is shown by several columns (c*n/cols)
+        std::size_t col = 0;
+        for (std::size_t i = 0; i < n;) {
+            const std::size_t end = std::min(n, i + kSlice);
+            std::lock_guard<std::mutex> l(m_mx);
+            for (; i < end; i++) {
+                const int32_t* bmin = &m_peakMin[((start + i) % m_peakBlocks) * kAudioChannels];
+                const int32_t* bmax = &m_peakMax[((start + i) % m_peakBlocks) * kAudioChannels];
+                if (n >= cols) {
+                    while (col + 1 < cols && i >= (col + 1) * n / cols) col++;
+                    for (int ch = 0; ch < kAudioChannels; ch++) {
+                        int32_t& mn = outMin[std::size_t(ch) * cols + col];
+                        int32_t& mx = outMax[std::size_t(ch) * cols + col];
+                        mn = std::min(mn, bmin[ch]);
+                        mx = std::max(mx, bmax[ch]);
+                    }
+                } else {
+                    for (std::size_t c = (i * cols + n - 1) / n; c < cols && c * n / cols == i; c++)
+                        for (int ch = 0; ch < kAudioChannels; ch++) {
+                            outMin[std::size_t(ch) * cols + c] = bmin[ch];
+                            outMax[std::size_t(ch) * cols + c] = bmax[ch];
+                        }
+                }
+            }
         }
         return n;
     }

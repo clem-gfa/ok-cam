@@ -28,8 +28,6 @@ AudioWaveCanvas::AudioWaveCanvas(wxWindow* parent)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(640, 448), wxFULL_REPAINT_ON_RESIZE) {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
     SetMinSize(wxSize(320, 224));
-    m_min.assign(8192, 0);
-    m_max.assign(8192, 0);
     Bind(wxEVT_PAINT, &AudioWaveCanvas::OnPaint, this);
 }
 
@@ -41,15 +39,22 @@ void AudioWaveCanvas::OnPaint(wxPaintEvent&) {
 void AudioWaveCanvas::DrawTo(wxDC& dc, const wxSize& size) {
     dc.SetBackground(wxBrush(kBackground));
     dc.Clear();
-    const int cols = m_wide ? 16 : 8;
+    const int cols = (m_cols >= 1 && kAudioChannels % m_cols == 0) ? m_cols : 8;
     const int rows = kAudioChannels / cols;
     const double cw = double(size.GetWidth()) / cols;
     const double chh = double(size.GetHeight()) / rows;
     const std::size_t blocks = m_audio
-        ? std::min<std::size_t>(m_min.size(), std::max<std::size_t>(1, std::size_t((double(m_windowMs) / 1000.0 * m_audio->sampleRate()) / kAudioPeakBlock + 0.5)))
+        ? std::max<std::size_t>(1, std::size_t((double(m_windowMs) / 1000.0 * m_audio->sampleRate()) / kAudioPeakBlock + 0.5))
         : 1;
     const double k = ((chh / 2 - 2) * m_gain) / kFullScale;
     const int pxCols = std::max(8, int(cw) - 2);
+    // all channels at once: min/max per pixel column of the last `blocks` blocks (one pass over the peaks, see windowPeaks)
+    std::size_t n = 0;
+    if (m_audio) {
+        const std::size_t need = std::size_t(kAudioChannels) * std::size_t(pxCols);
+        if (m_min.size() < need) { m_min.resize(need); m_max.resize(need); }
+        n = m_audio->windowPeaks(blocks, std::size_t(pxCols), m_min.data(), m_max.data());
+    }
     dc.SetFont(wxFont(7, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
     for (int ch = 0; ch < kAudioChannels; ch++) {
         const int x0 = int((ch % cols) * cw);
@@ -60,17 +65,12 @@ void AudioWaveCanvas::DrawTo(wxDC& dc, const wxSize& size) {
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
         dc.DrawRectangle(x0, y0, w, h);
         if (m_audio) {
-            const std::size_t n = m_audio->recentPeaks(ch, blocks, m_min.data(), m_max.data());
             if (n > 0) {
                 dc.SetPen(wxPen(kTrace));
+                const int32_t* cmin = &m_min[std::size_t(ch) * std::size_t(pxCols)];
+                const int32_t* cmax = &m_max[std::size_t(ch) * std::size_t(pxCols)];
                 for (int px = 0; px < pxCols; px++) {
-                    const std::size_t i0 = std::size_t(px) * n / std::size_t(pxCols);
-                    const std::size_t i1 = std::max(i0 + 1, std::size_t(px + 1) * n / std::size_t(pxCols));
-                    int32_t mn = m_min[i0], mx = m_max[i0];
-                    for (std::size_t i = i0 + 1; i < i1 && i < n; i++) {
-                        mn = std::min(mn, m_min[i]);
-                        mx = std::max(mx, m_max[i]);
-                    }
+                    const int32_t mn = cmin[px], mx = cmax[px];
                     const int yTop = int(std::max<double>(y0 + 1, mid - mx * k));
                     const int yBot = int(std::min<double>(y0 + h - 1, mid - mn * k));
                     dc.DrawLine(x0 + 1 + px, yTop, x0 + 1 + px, std::max(yBot, yTop + 1));
@@ -102,17 +102,19 @@ AudioFrame::AudioFrame(wxWindow* parent, Actions actions, std::shared_ptr<okcli:
     bar->Add(m_prefix, 0, wxRIGHT, 12);
     bar->Add(new wxStaticText(root, wxID_ANY, "Window"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, 4);
     m_window = new wxChoice(root, wxID_ANY);
-    for (const char* s : {"5 ms", "20 ms", "100 ms"}) m_window->Append(s);
-    m_window->SetSelection(1);
+    for (const char* s : {"2 ms", "5 ms", "10 ms", "20 ms", "50 ms", "100 ms", "200 ms", "500 ms", "1 s", "2 s"}) m_window->Append(s);
+    m_window->SetSelection(3);
+    m_window->SetToolTip("Time span shown by each waveform (the display keeps the min / max of blocks of 8 samples = 42 us)");
     bar->Add(m_window, 0, wxRIGHT, 10);
     bar->Add(new wxStaticText(root, wxID_ANY, "Gain"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, 4);
     m_gain = new wxChoice(root, wxID_ANY);
-    for (const char* s : {"x1", "x8", "x64", "x512"}) m_gain->Append(s);
-    m_gain->SetSelection(1);
+    for (const char* s : {"x1", "x2", "x4", "x8", "x16", "x32", "x64", "x128", "x256", "x512"}) m_gain->Append(s);
+    m_gain->SetSelection(3);
     bar->Add(m_gain, 0, wxRIGHT, 10);
     bar->Add(new wxStaticText(root, wxID_ANY, "Layout"), 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, 4);
     m_layout = new wxChoice(root, wxID_ANY);
-    for (const char* s : {"8 x 8", "16 x 4"}) m_layout->Append(s);
+    for (const char* s : {"8 x 8", "16 x 4", "4 x 16", "32 x 2", "2 x 32"}) m_layout->Append(s);
+    m_layout->SetToolTip("Waveforms per row x rows");
     m_layout->SetSelection(0);
     bar->Add(m_layout, 0);
     col->Add(bar, 0, wxALL, 8);
@@ -182,11 +184,13 @@ void AudioFrame::OnShow(wxShowEvent& e) {
 }
 
 void AudioFrame::ApplySettings() {
-    static const int windows[] = {5, 20, 100};
-    static const int gains[] = {1, 8, 64, 512};
-    m_canvas->SetWindowMs(windows[std::max(0, m_window->GetSelection())]);
-    m_canvas->SetGain(gains[std::max(0, m_gain->GetSelection())]);
-    m_canvas->SetWide(m_layout->GetSelection() == 1);
+    static const int windows[] = {2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000};
+    static const int gains[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
+    static const int cols[] = {8, 16, 4, 32, 2};
+    auto pick = [](const int* table, std::size_t size, int sel, int def) { return (sel >= 0 && std::size_t(sel) < size) ? table[sel] : def; };
+    m_canvas->SetWindowMs(pick(windows, 10, m_window->GetSelection(), 20));
+    m_canvas->SetGain(pick(gains, 10, m_gain->GetSelection(), 8));
+    m_canvas->SetCols(pick(cols, 5, m_layout->GetSelection(), 8));
     m_canvas->Refresh(false);
 }
 

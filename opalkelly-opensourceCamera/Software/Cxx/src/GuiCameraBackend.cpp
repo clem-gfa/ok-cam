@@ -675,6 +675,7 @@ bool GuiCameraBackend::audioStart(std::string& err) {
         if (!m_audio) {
             AudioCaptureOptions opt;
             opt.keepRaw = false;     // the display uses the per-block peaks only
+            opt.ringFrames = 524288; // peaks kept for the display: ~2.8 s (the longest window is 2 s)
             opt.catchUp = true;      // behind and not recording: show the newest audio instead of a growing delay
             opt.segmentSeconds = 60;
             m_audio = std::make_shared<AudioCapture>(*m_audioPipe, opt);

@@ -31,7 +31,8 @@ public:
     void SetAudio(std::shared_ptr<okcli::AudioCapture> audio) { m_audio = std::move(audio); Refresh(false); }
     void SetWindowMs(int ms) { m_windowMs = ms; }
     void SetGain(int gain) { m_gain = gain; }
-    void SetWide(bool wide) { m_wide = wide; }          // 16 x 4 instead of 8 x 8
+    void SetWide(bool wide) { m_cols = wide ? 16 : 8; } // 16 x 4 instead of 8 x 8
+    void SetCols(int cols) { m_cols = std::max(1, std::min(64, cols)); }   // columns of the grid (rows = 64 / cols)
     // Draws the grid into any DC (used by OnPaint, and by tests on a memory DC).
     void DrawTo(wxDC& dc, const wxSize& size);
 
@@ -40,7 +41,7 @@ private:
 
     std::shared_ptr<okcli::AudioCapture> m_audio;
     int m_windowMs = 20, m_gain = 8;
-    bool m_wide = false;
+    int m_cols = 8;
     std::vector<int32_t> m_min, m_max;                  // reused buffers (no allocation per image)
 };
 

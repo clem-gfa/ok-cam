@@ -234,6 +234,39 @@ int main() {
         assert(cap.pumpBlocking() == 1 && cap.stats().packets == 1);
     }
 
+    // ---- windowPeaks: the display's reduction of the peaks equals a per-channel reduction of recentPeaks ----------------------------------------
+    {
+        FakePipe pipe;
+        const int NPK = 3300;                                   // > 8192 blocks: the ring wraps
+        for (int q = 0; q < NPK; q++) pipe.push(makePacket(uint32_t(q), 0, false));
+        AudioCaptureOptions opt; opt.maxPacketsPerRead = 32;
+        AudioCapture cap(pipe, opt);
+        cap.reset();
+        drain(cap);
+        std::vector<int32_t> mn(64 * 700), mx(64 * 700), rmn(9000), rmx(9000);
+        for (const std::size_t blocks : {std::size_t(1), std::size_t(5), std::size_t(24), std::size_t(300), std::size_t(5000), std::size_t(8192), std::size_t(20000)})
+            for (const std::size_t cols : {std::size_t(1), std::size_t(7), std::size_t(60), std::size_t(700)}) {
+                const std::size_t n = cap.windowPeaks(blocks, cols, mn.data(), mx.data());
+                assert(n == std::min<std::size_t>(blocks, 8192));
+                for (int ch : {0, 13, 63}) {
+                    assert(cap.recentPeaks(ch, blocks, rmn.data(), rmx.data()) == n);
+                    for (std::size_t c = 0; c < cols; c++) {
+                        int32_t emn, emx;
+                        if (n >= cols) {
+                            const std::size_t i0 = c * n / cols, i1 = std::max(i0 + 1, (c + 1) * n / cols);
+                            emn = rmn[i0]; emx = rmx[i0];
+                            for (std::size_t i = i0 + 1; i < i1 && i < n; i++) { emn = std::min(emn, rmn[i]); emx = std::max(emx, rmx[i]); }
+                        } else {
+                            emn = rmn[c * n / cols]; emx = rmx[c * n / cols];
+                        }
+                        assert(mn[std::size_t(ch) * cols + c] == emn && mx[std::size_t(ch) * cols + c] == emx);
+                    }
+                }
+            }
+        FakePipe empty; AudioCapture none(empty);
+        assert(none.windowPeaks(100, 10, mn.data(), mx.data()) == 0 && cap.windowPeaks(10, 0, mn.data(), mx.data()) == 0);
+    }
+
     // ---- smaller files: 16 bit / decimation by 2 (header, sizes, samples, csv, several segments) ------------------------------------------------
     for (const AudioRecordFormat fmt : {AudioRecordFormat{1, 16}, AudioRecordFormat{2, 24}, AudioRecordFormat{4, 16}}) {
         const fs::path dir = tmpDir("fmt");

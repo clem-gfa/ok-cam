@@ -86,6 +86,22 @@ int main(int argc, char** argv) {
         af->Canvas()->DrawTo(dc2, wxSize(640, 448));
         dc2.SelectObject(wxNullBitmap);
 
+        // every layout and window of the lists draws (no crash, traces visible)
+        for (const int cols : {2, 4, 8, 16, 32})
+            for (const int ms : {2, 20, 2000}) {
+                af->Canvas()->SetCols(cols);
+                af->Canvas()->SetWindowMs(ms);
+                wxBitmap b3(800, 448);
+                wxMemoryDC d3(b3);
+                af->Canvas()->DrawTo(d3, wxSize(800, 448));
+                d3.SelectObject(wxNullBitmap);
+                const wxImage i3 = b3.ConvertToImage();
+                int t3 = 0;
+                for (int y = 0; y < i3.GetHeight(); y += 2)
+                    for (int x = 0; x < i3.GetWidth(); x += 2)
+                        if (i3.GetRed(x, y) == 90 && i3.GetGreen(x, y) == 209 && i3.GetBlue(x, y) == 160) t3++;
+                assert(t3 > 200);
+            }
         const wxString st = AudioFrame::FormatStats(audio->stats(), audio->sampleRate());
         std::cout << st.ToStdString() << "\n";
         assert(st.Contains("packets 120") && st.Contains("lost 0 (0.0%)"));
