@@ -183,3 +183,15 @@ Code : `src/AcousticCamera.h` (sans dépendance), test : `tests/acoustic_camera_
   dans la bonne cellule (±1) et du bon côté. **Pas encore sur la carte réelle** : la correspondance canal ↔ micro, l'orientation de la
   caméra et la vitesse du son (343 m/s, 20 °C) sont des hypothèses à valider avec une source connue (haut-parleur sur une tonalité
   de 10 à 15 kHz placé à droite de l'axe de la caméra).
+
+#### Baseline (bruit de l'environnement)
+
+Bouton « Baseline » de la caméra acoustique : moyenne de 12 cartes (~2,5 s) de la puissance formée par direction, mesurée pendant
+que seul le bruit habituel est présent (ventilateurs, ventilation, machine toujours en marche). Ensuite « subtract » affiche
+ce qui **dépasse** la baseline : `puissance − k × baseline` (k = marge de +1 / +3 / +6 dB, défaut 3 dB), parties négatives
+coupées. L'environnement seul donne une carte vide (« Nothing above the baseline ») ; une nouvelle source apparaît seule, même plus
+faible qu'un bruit déjà présent (test : ventilateur à 6 dB au-dessus de la nouvelle source, la carte brute pointe le ventilateur,
+la carte avec baseline pointe la nouvelle source, +15 dB au-dessus de l'environnement). Le repère affiche l'écart en dB sur la baseline.
+La baseline n'est valable que pour les réglages de sa mesure (bande, champ, flips, forme de l'image) : en changer un la
+supprime (message), il faut la refaire. Une marge plus haute réduit les fausses alarmes dues aux fluctuations du bruit (~±0,6 dB).
+La baseline n'est pas mémorisée d'une session à l'autre.
