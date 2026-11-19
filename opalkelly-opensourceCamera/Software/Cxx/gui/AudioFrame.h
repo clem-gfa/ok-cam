@@ -66,6 +66,7 @@ public:
     // Used by the video recording: the audio is recorded with the same folder + session name (<session>_NNN.wav / .csv next
     // to <session>_video.*), so that the files belong together.
     bool IsRunning() const { return m_running && m_audio; }
+    std::shared_ptr<okcli::AudioCapture> Audio() const { return m_audio; }   // for the acoustic camera (beamforming)
     bool IsRecording() const { return m_audio && m_audio->recording(); }
     bool StartRecordingWith(const std::string& dir, const std::string& session, std::string& why);
     void StopRecording();

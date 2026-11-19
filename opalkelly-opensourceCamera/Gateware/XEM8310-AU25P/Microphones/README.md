@@ -161,3 +161,25 @@ CSV compte les échantillons du fichier (position d'entrée ÷ décimation). Le 
 pour une qualité égale mais plus de CPU : voir les images perdues dans la ligne d'état), taille de l'image (100 / 75 / 50 / 25 %) et cadence
 (toutes les images, 1 sur 2 / 3 / 6). Mjpeg et ffv1 suivent la taille et la cadence ; le codec `raw` ignore la qualité et la taille.
 Les choix sont mémorisés. `_video_info.txt` rappelle les réglages ; le CSV ne contient que les images enregistrées.
+
+### Caméra acoustique (application C++)
+
+Case « Acoustic camera » de la colonne de réglages (les micros doivent tourner) : formation de voies *delay-and-sum* dans le
+domaine fréquentiel sur les 64 micros, carte de provenance du son superposée à l'image vidéo (non enregistrée dans le fichier).
+Code : `src/AcousticCamera.h` (sans dépendance), test : `tests/acoustic_camera_test.cpp`.
+
+- **Méthode** : ~1000 derniers échantillons continus des 64 voies (3 segments de 512, Hann, 50 %), FFT, pour chaque direction de la
+  grille 48 × 27 (champ de la caméra) la somme `Σ X_m(f)·exp(-j2πf p_m·d/c)` sur la bande choisie, puissance en dB relative au maximum.
+  ~8 ms par carte, 5 cartes par seconde par défaut. Si un paquet audio est perdu, seule la partie continue est analysée.
+- **Géométrie** : positions des micros dans le repère caméra (x à droite, y en bas), caméra = trou Ø6 en (100, 100) mm :
+  `x = y_kicad − 100`, `y = 100 − x_kicad` (le plan « côté port acoustique tourné de 90° à droite »). Hypothèse physique : si une
+  source à droite de l'image apparaît à gauche (ou en haut/en bas), cocher « flip X » / « flip Y ». Un champ de 62,2° (IMX219)
+  par défaut, réglable ; le champ vertical suit la forme de l'image.
+- **Ce qu'on peut en attendre** : ouverture ~76 mm, donc largeur de faisceau ≈ λ/D : ~50° à 5 kHz, 13° à 20 kHz, 4° à 60 kHz. Il faut
+  prendre la bande la plus haute que la source émet. Les micros sont espacés de 8 à 10 mm : au-delà de ~20 kHz apparaissent des
+  faisceaux fantômes (repliement spatial), atténués par la disposition en spirale. Un son diffus donne une carte plate (contraste
+  faible, pas de repère) ; le repère « az / él » n'apparaît que si le maximum ressort de plus de 3 dB de la médiane.
+- **Vérifié hors matériel** sur des sources synthétiques (7 directions dont hors axe, 35 kHz, bruit ajouté, miroir) : le maximum tombe
+  dans la bonne cellule (±1) et du bon côté. **Pas encore sur la carte réelle** : la correspondance canal ↔ micro, l'orientation de la
+  caméra et la vitesse du son (343 m/s, 20 °C) sont des hypothèses à valider avec une source connue (haut-parleur sur une tonalité
+  de 10 à 15 kHz placé à droite de l'axe de la caméra).

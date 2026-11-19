@@ -32,6 +32,11 @@ public:
 
     // Boxes drawn over the image (object detection). Pixels of the analysed image; empty result: nothing drawn.
     void SetDetections(const okcli::DetectionResult& r) { m_det = r; Refresh(false); }
+    // Acoustic camera: a colour map (RGBA, w x h cells) laid over the image, scaled to it, plus a marker at the maximum
+    // (normalised image coordinates -1..1) with a text. GUI thread only.
+    void SetOverlay(const std::vector<uint8_t>& rgba, int w, int h);
+    void SetOverlayMarker(bool show, double xn, double yn, const wxString& label);
+    void ClearOverlay();
     void ClearDetections() { m_det = okcli::DetectionResult(); Refresh(false); }
 
 private:
@@ -42,4 +47,11 @@ private:
     bool m_have = false;
     bool m_scaleToFit = true;
     okcli::DetectionResult m_det;
+    std::vector<uint8_t> m_ovRgb, m_ovAlpha;      // the overlay split into colour and opacity (wxImage wants them apart)
+    int m_ovW = 0, m_ovH = 0;
+    wxBitmap m_ovBitmap;                          // the overlay scaled to the image as displayed (cache)
+    wxSize m_ovBitmapSize;
+    bool m_ovMarker = false;
+    double m_ovMx = 0, m_ovMy = 0;
+    wxString m_ovLabel;
 };

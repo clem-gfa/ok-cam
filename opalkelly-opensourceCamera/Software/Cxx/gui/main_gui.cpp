@@ -46,6 +46,7 @@
 #include <utility>
 #include <vector>
 
+#include "AcousticCamera.h"
 #include "AudioFrame.h"
 #include "GuiCameraBackend.h"
 #include "RgbViewport.h"
@@ -819,6 +820,43 @@ private:
             wxSizer* column = m_histChk->GetContainingSizer();
             // Video recording (any camera): H.264 through ffmpeg when available, else raw RGB; with the microphones running the
             // audio is recorded with it (same session name), see VideoRecorder.h
+            // Acoustic camera: beamforming of the 64 microphones, colour map laid over the image (not recorded in the video)
+            m_acChk = new wxCheckBox(host, wxID_ANY, "Acoustic camera");
+            m_acChk->SetToolTip("Delay-and-sum beamforming of the 64 microphones: where the sound comes from (microphones must be running)");
+            m_acBand = new wxChoice(host, wxID_ANY);
+            for (const char* b : {"2-6 kHz", "6-12 kHz", "8-20 kHz", "15-30 kHz", "30-45 kHz", "45-60 kHz"}) m_acBand->Append(b);
+            m_acBand->SetSelection(2);
+            m_acBand->SetToolTip("Frequency band analysed: use the highest band the source emits (a higher band gives a sharper map)");
+            m_acRange = new wxChoice(host, wxID_ANY);
+            for (const char* r : {"3 dB", "6 dB", "10 dB", "20 dB"}) m_acRange->Append(r);
+            m_acRange->SetSelection(1);
+            m_acRange->SetToolTip("Dynamic range of the colour map below the maximum");
+            m_acFlipX = new wxCheckBox(host, wxID_ANY, "flip X");
+            m_acFlipY = new wxCheckBox(host, wxID_ANY, "flip Y");
+            m_acFlipX->SetToolTip("Tick if a source on the right of the image appears on the left");
+            m_acFlipY->SetToolTip("Tick if a source at the top of the image appears at the bottom");
+            m_acFov = new wxSpinCtrlDouble(host, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 20.0, 140.0, 62.2, 0.5);
+            m_acFov->SetToolTip("Horizontal field of view of the camera in degrees (IMX219: 62.2)");
+            m_acInfo = new wxStaticText(host, wxID_ANY, "");
+            {
+                auto* row = new wxBoxSizer(wxHORIZONTAL);
+                row->Add(m_acChk, 1, wxALIGN_CENTRE_VERTICAL);
+                row->Add(m_acBand, 0, wxALIGN_CENTRE_VERTICAL);
+                column->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+                auto* row2 = new wxBoxSizer(wxHORIZONTAL);
+                row2->Add(m_acRange, 0, wxALIGN_CENTRE_VERTICAL | wxRIGHT, FromDIP(6));
+                row2->Add(m_acFov, 1, wxALIGN_CENTRE_VERTICAL | wxRIGHT, FromDIP(6));
+                column->Add(row2, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
+                auto* row3 = new wxBoxSizer(wxHORIZONTAL);
+                row3->Add(m_acFlipX, 0, wxRIGHT, FromDIP(10));
+                row3->Add(m_acFlipY, 0);
+                column->Add(row3, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
+                column->Add(m_acInfo, 0, wxLEFT | wxRIGHT, FromDIP(16));
+            }
+            m_acChk->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& e) { setAcousticCamera(e.IsChecked()); });
+            for (wxChoice* c : {m_acBand, m_acRange}) c->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { applyAcousticSettings(); });
+            for (wxCheckBox* c : {m_acFlipX, m_acFlipY}) c->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { applyAcousticSettings(); });
+            m_acFov->Bind(wxEVT_SPINCTRLDOUBLE, [this](wxSpinDoubleEvent&) { applyAcousticSettings(); });
             // Object detection (YOLO26n, ONNX Runtime): boxes drawn over the image, not recorded in the video
             m_detectChk = new wxCheckBox(host, wxID_ANY, "Detect objects");
             m_detectInfo = new wxStaticText(host, wxID_ANY, "");
@@ -1388,6 +1426,73 @@ private:
         m_ioFrame->Raise();
     }
 
+    // ---- acoustic camera (beamforming of the 64 microphones, see AcousticCamera.h) ----------------------------------------------
+    okcli::AcousticSettings acousticSettings() const {
+        static const double kBands[][2] = {{2000, 6000}, {6000, 12000}, {8000, 20000}, {15000, 30000}, {30000, 45000}, {45000, 60000}};
+        okcli::AcousticSettings s;
+        const int b = m_acBand ? m_acBand->GetSelection() : 2;
+        s.fLo = kBands[(b >= 0 && b < 6) ? b : 2][0];
+        s.fHi = kBands[(b >= 0 && b < 6) ? b : 2][1];
+        s.hfovDeg = m_acFov ? m_acFov->GetValue() : 62.2;
+        s.aspect = m_acAspect;
+        s.flipX = m_acFlipX && m_acFlipX->GetValue();
+        s.flipY = m_acFlipY && m_acFlipY->GetValue();
+        return s;
+    }
+    double acousticRangeDb() const {
+        static const double kRanges[] = {3, 6, 10, 20};
+        const int r = m_acRange ? m_acRange->GetSelection() : 1;
+        return kRanges[(r >= 0 && r < 4) ? r : 1];
+    }
+    void applyAcousticSettings() {
+        if (m_acoustic) m_acoustic->setSettings(acousticSettings());
+        m_acSeq = 0;                       // redraw the current map with the new range
+    }
+    void setAcousticCamera(bool on) {
+        m_acoustic.reset();
+        m_acSeq = 0;
+        m_viewport->ClearOverlay();
+        m_acInfo->SetLabel("");
+        if (on) {
+            std::shared_ptr<okcli::AudioCapture> audio = (m_audioFrame && m_audioFrame->IsRunning()) ? m_audioFrame->Audio() : nullptr;
+            if (!audio) {
+                m_acChk->SetValue(false);
+                m_acInfo->SetLabel("Start the microphones first (Microphones window).");
+                m_acInfo->Wrap(FromDIP(260));
+            } else {
+                m_acoustic = std::make_unique<okcli::AcousticWorker>(audio);
+                applyAcousticSettings();
+                m_acInfo->SetLabel("Computing...");
+            }
+        }
+        relayoutSidebar();
+    }
+    // Called with every displayed frame: shows the newest acoustic map over the image.
+    void updateAcoustic() {
+        if (!m_acoustic) return;
+        if (!m_audioFrame || !m_audioFrame->IsRunning()) {        // microphones stopped: nothing more to show
+            m_acChk->SetValue(false);
+            setAcousticCamera(false);
+            m_acInfo->SetLabel("Microphones stopped.");
+            return;
+        }
+        const okcli::AcousticMap m = m_acoustic->latest();
+        if (m.sequence == 0) {
+            const std::string st = m_acoustic->status();
+            if (!st.empty()) { m_acInfo->SetLabel(wxString::FromUTF8(st)); m_acInfo->Wrap(FromDIP(260)); }
+            return;
+        }
+        if (m.sequence == m_acSeq) return;
+        m_acSeq = m.sequence;
+        m_viewport->SetOverlay(okcli::colorizeMap(m, acousticRangeDb()), m.w, m.h);
+        const double xn = (m.peakX + 0.5) / m.w * 2 - 1, yn = (m.peakY + 0.5) / m.h * 2 - 1;
+        // the marker only when the source stands out of a diffuse sound
+        m_viewport->SetOverlayMarker(m.contrastDb > 3.0f, xn, yn, wxString::Format("%+.0f / %+.0f deg", m.azimuthDeg, m.elevationDeg));
+        m_acInfo->SetLabel(wxString::Format("az %+.1f deg, el %+.1f deg | contrast %.0f dB | level %.0f dB | %.0f ms",
+                                            m.azimuthDeg, m.elevationDeg, m.contrastDb, m.levelDb, m.computeMs));
+        m_acInfo->Wrap(FromDIP(260));
+    }
+
     // ---- object detection -----------------------------------------------------------------------------------------------
     // Model: $OKCAM_YOLO_MODEL, else models/yolo26n_320.onnx next to the executable.
     static std::string yoloModelPath() {
@@ -1446,6 +1551,11 @@ private:
     void showFrame() {
         const GuiCameraBackend::Frame& f = m_worker->CurrentFrame();
         m_viewport->UpdateImage(f.rgb.data(), f.width, f.height);
+        if (f.width > 0 && f.height > 0 && std::fabs(m_acAspect - double(f.width) / f.height) > 1e-3) {
+            m_acAspect = double(f.width) / f.height;                 // the vertical field of view follows the image shape
+            applyAcousticSettings();
+        }
+        updateAcoustic();
         updateDetection(f);
         if (m_histPanel->IsShown()) m_histPanel->UpdateHistogram(f.histogram);
         if (m_ledBmp && !m_continuousBtn->GetValue()) m_ledBmp->Hide();  // single-capture LED flash done
@@ -1545,6 +1655,14 @@ private:
     std::shared_ptr<okcli::RecordingSettings> m_recSettings = recprefs::load();
     wxTextCtrl* m_recPrefix = nullptr;
     wxChoice *m_vidQuality = nullptr, *m_vidScale = nullptr, *m_vidRate = nullptr;
+    wxCheckBox* m_acChk = nullptr;
+    wxChoice *m_acBand = nullptr, *m_acRange = nullptr;
+    wxCheckBox *m_acFlipX = nullptr, *m_acFlipY = nullptr;
+    wxSpinCtrlDouble* m_acFov = nullptr;
+    wxStaticText* m_acInfo = nullptr;
+    std::unique_ptr<okcli::AcousticWorker> m_acoustic;      // alive while "Acoustic camera" is ticked
+    uint64_t m_acSeq = 0;
+    double m_acAspect = 16.0 / 9.0;
     wxCheckBox* m_detectChk = nullptr;
     wxChoice* m_detectRate = nullptr;
     wxStaticText* m_detectInfo = nullptr;

@@ -225,7 +225,8 @@ struct AudioCaptureOptions {
     std::size_t ringFrames = 65536;               // frames kept for recent() when keepRaw
     double      segmentSeconds = 60;              // a recording is cut into files of this duration
     std::size_t maxPacketsPerRead = 32;           // the gateware FIFO holds 32 packets
-    bool        keepRaw = false;                  // keep the raw samples (recent()); the display needs only the peaks
+    bool        keepRaw = false;                  // keep the raw samples (recent(), recentFrames()); the display needs only the peaks
+    std::size_t rawFrames = 0;                    // size of that raw ring in frames (0 = ringFrames); 16384 frames = 86 ms = 4 MB
     bool        catchUp = false;                  // behind and not recording: decode only the newest packet of each read
     // Called (from the writer thread) once a segment's WAV and CSV are closed.
     std::function<void(const std::string& wavPath, const std::string& csvPath)> onSegmentClosed;
@@ -240,7 +241,10 @@ public:
         m_peakBlocks = std::max<std::size_t>(1, m_opt.ringFrames / kAudioPeakBlock);
         m_peakMin.assign(m_peakBlocks * kAudioChannels, 0);
         m_peakMax.assign(m_peakBlocks * kAudioChannels, 0);
-        if (m_opt.keepRaw) m_ring.assign(m_opt.ringFrames * kAudioChannels, 0);
+        if (m_opt.keepRaw) {
+            m_rawFrames = m_opt.rawFrames > 0 ? m_opt.rawFrames : m_opt.ringFrames;
+            m_ring.assign(m_rawFrames * kAudioChannels, 0);
+        }
         m_buffer.resize(std::size_t(kAudioPacketBytes) * std::max<std::size_t>(1, m_opt.maxPacketsPerRead));
     }
     ~AudioCapture() {
@@ -263,6 +267,7 @@ public:
         m_peakHead = m_peakFill = 0;
         m_accCount = 0;
         m_ringHead = m_ringFill = 0;
+        m_rawSinceGap = 0;
     }
 
     AudioStats stats() const {
@@ -436,9 +441,24 @@ public:
         if (!m_opt.keepRaw) return {};
         const std::size_t n = std::min(maxFrames, m_ringFill);
         std::vector<int32_t> out(n);
-        const std::size_t start = (m_ringHead + m_opt.ringFrames - n) % m_opt.ringFrames;
-        for (std::size_t i = 0; i < n; i++) out[i] = m_ring[((start + i) % m_opt.ringFrames) * kAudioChannels + channel];
+        const std::size_t start = (m_ringHead + m_rawFrames - n) % m_rawFrames;
+        for (std::size_t i = 0; i < n; i++) out[i] = m_ring[((start + i) % m_rawFrames) * kAudioChannels + channel];
         return out;
+    }
+
+    // The last up-to-`maxFrames` frames of ALL channels, interleaved ([frame][channel], sign-extended 24-bit), oldest first,
+    // copied into `out` (maxFrames * kAudioChannels values). Only frames received without any gap (lost or skipped packets)
+    // are returned: the result is a continuous signal, which is what beamforming needs. Returns the number of frames (0 if
+    // raw samples are not kept). `endSeq` (optional) receives the number of frames received so far, to tell new data.
+    std::size_t recentFrames(std::size_t maxFrames, int32_t* out, uint64_t* endFrame = nullptr) const {
+        std::lock_guard<std::mutex> l(m_mx);
+        if (!m_opt.keepRaw) return 0;
+        const std::size_t n = std::min({maxFrames, m_ringFill, m_rawSinceGap});
+        if (endFrame) *endFrame = m_stats.frames;
+        const std::size_t start = (m_ringHead + m_rawFrames - n) % m_rawFrames;
+        for (std::size_t i = 0; i < n; i++)
+            std::memcpy(out + i * kAudioChannels, &m_ring[((start + i) % m_rawFrames) * kAudioChannels], kAudioChannels * sizeof(int32_t));
+        return n;
     }
 
 private:
@@ -662,6 +682,7 @@ private:
         if (!parseAudioPacket(p, h)) { m_stats.badBlocks++; return; }
         trackPacketLocked(h);
         m_stats.skippedPackets++;
+        m_rawSinceGap = 0;                       // the raw ring is no longer continuous
     }
 
     // Sequence / loss / timebase bookkeeping shared by skipPacket() and handle(). m_mx held. Returns the number of
@@ -691,6 +712,7 @@ private:
             std::lock_guard<std::mutex> l(m_mx);
             if (!parseAudioPacket(p, h)) { m_stats.badBlocks++; return; }
             lostFrames = trackPacketLocked(h);
+            if (lostFrames > 0) m_rawSinceGap = 0;
             decodeLocked(h);
         }
         record(h, lostFrames);
@@ -717,8 +739,9 @@ private:
             }
             if (m_opt.keepRaw) std::memcpy(&m_ring[m_ringHead * kAudioChannels], v, sizeof v);
             if (m_opt.keepRaw) {
-                m_ringHead = (m_ringHead + 1) % m_opt.ringFrames;
-                if (m_ringFill < m_opt.ringFrames) m_ringFill++;
+                m_ringHead = (m_ringHead + 1) % m_rawFrames;
+                if (m_ringFill < m_rawFrames) m_ringFill++;
+                m_rawSinceGap++;
             }
             if (++m_accCount >= kAudioPeakBlock) {
                 std::memcpy(&m_peakMin[m_peakHead * kAudioChannels], m_accMin, sizeof m_accMin);
@@ -744,7 +767,7 @@ private:
     Clock::time_point m_lastPump, m_startTime;
     bool m_lastPumpValid = false, m_started = false;
     std::vector<int32_t> m_ring;
-    std::size_t m_ringHead = 0, m_ringFill = 0;
+    std::size_t m_ringHead = 0, m_ringFill = 0, m_rawFrames = 0, m_rawSinceGap = 0;
     std::size_t m_peakBlocks = 1;
     std::vector<int32_t> m_peakMin, m_peakMax;
     std::size_t m_peakHead = 0, m_peakFill = 0;

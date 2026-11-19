@@ -674,7 +674,8 @@ bool GuiCameraBackend::audioStart(std::string& err) {
         if (!m_audioPipe) m_audioPipe.reset(new AudioPipeOverClassicDataPort(m_transport.classicPort));
         if (!m_audio) {
             AudioCaptureOptions opt;
-            opt.keepRaw = false;     // the display uses the per-block peaks only
+            opt.keepRaw = true;      // the display uses the per-block peaks; the acoustic camera (beamforming) needs the raw samples
+            opt.rawFrames = 4096;    // 21 ms, 1 MB: the beamformer analyses ~1000 frames at a time
             opt.ringFrames = 524288; // peaks kept for the display: ~2.8 s (the longest window is 2 s)
             opt.catchUp = true;      // behind and not recording: show the newest audio instead of a growing delay
             opt.segmentSeconds = 60;
