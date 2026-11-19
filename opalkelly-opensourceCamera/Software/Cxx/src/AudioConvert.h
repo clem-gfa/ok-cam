@@ -33,6 +33,7 @@
 
 namespace okcli {
 
+constexpr double kPi = 3.14159265358979323846;   // M_PI is not defined by MSVC without _USE_MATH_DEFINES
 constexpr int kAudioFormatChannels = 64;      // same as kAudioChannels (AudioStream.h), repeated so that this file stands alone
 constexpr int kAudioFormatFrameBytes = 192;   // 64 x 24 bit
 
@@ -109,7 +110,7 @@ private:
             double sum = 0;
             for (int k = 0; k < kTaps; k++) {
                 const double n = k - (kTaps - 1) / 2.0;
-                const double sinc = n == 0 ? 0.5 : std::sin(M_PI * n / 2.0) / (M_PI * n);       // cutoff 1/4 of the sampling rate
+                const double sinc = n == 0 ? 0.5 : std::sin(kPi * n / 2.0) / (kPi * n);       // cutoff 1/4 of the sampling rate
                 const double r = 2.0 * k / (kTaps - 1) - 1.0;
                 d[k] = sinc * i0(beta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0(beta);
                 sum += d[k];

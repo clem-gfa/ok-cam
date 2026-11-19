@@ -16,8 +16,8 @@ static std::vector<uint8_t> makeInput(std::size_t n, double f0, double a0, doubl
     std::vector<uint8_t> v(n * 192, 0);
     auto put = [&](std::size_t i, int c, int32_t x) { v[i * 192 + 3 * c] = uint8_t(x); v[i * 192 + 3 * c + 1] = uint8_t(x >> 8); v[i * 192 + 3 * c + 2] = uint8_t(x >> 16); };
     for (std::size_t i = 0; i < n; i++) {
-        put(i, 0, int32_t(std::lround(a0 * std::sin(2 * M_PI * f0 * double(i) / FS))));
-        put(i, 1, int32_t(std::lround(a1 * std::sin(2 * M_PI * f1 * double(i) / FS))));
+        put(i, 0, int32_t(std::lround(a0 * std::sin(2 * kPi * f0 * double(i) / FS))));
+        put(i, 1, int32_t(std::lround(a1 * std::sin(2 * kPi * f1 * double(i) / FS))));
         put(i, 2, dc);
     }
     return v;
@@ -32,7 +32,7 @@ static double amp(const std::vector<uint8_t>& o, std::size_t n, int c, int bytes
     double re = 0, im = 0; std::size_t cnt = 0;
     for (std::size_t i = 200; i < n; i++, cnt++) {
         const double x = double(get(o, i, c, bytes)) * scale;
-        re += x * std::cos(2 * M_PI * f * double(i) / fs); im += x * std::sin(2 * M_PI * f * double(i) / fs);
+        re += x * std::cos(2 * kPi * f * double(i) / fs); im += x * std::sin(2 * kPi * f * double(i) / fs);
     }
     return 2.0 * std::sqrt(re * re + im * im) / double(cnt);
 }
