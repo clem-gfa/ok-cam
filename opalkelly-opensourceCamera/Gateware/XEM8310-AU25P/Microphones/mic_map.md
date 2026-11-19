@@ -74,3 +74,7 @@ Règles lues sur le schéma (vérifiées sur les 32 feuilles) :
 | 62 | MK62 | Dual Mic 31 | MicData31 | `mic_data[30]` | MC2-13 | B14 (B87_L12P) | GND (bas) | Clock_4 |
 | 63 | MK63 | Dual Mic 32 | MicData32 | `mic_data[31]` | MC2-15 | A14 (B87_L12N) | VDD (haut) | Clock_4 |
 | 64 | MK64 | Dual Mic 32 | MicData32 | `mic_data[31]` | MC2-15 | A14 (B87_L12N) | GND (bas) | Clock_4 |
+
+## Position sur le PCB
+
+`mic_layout.svg` : vue de face (côté composants F.Cu) des 64 micros, d'après `DARWIN.kicad_pcb` (carte 170 × 100 mm, origine KiCad (50, 50) mm en haut à gauche). Les micros forment une spirale autour du trou Ø6 en (100, 100). Les coordonnées (centre du composant, mm) sont dans les colonnes `x_mm`, `y_mm` de `mic_map.csv`. Tous les micros sont sur la face avant.
