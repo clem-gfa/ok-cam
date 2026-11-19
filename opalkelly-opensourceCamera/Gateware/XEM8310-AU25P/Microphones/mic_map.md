@@ -79,7 +79,8 @@ Règles lues sur le schéma (vérifiées sur les 32 feuilles) :
 
 Les micros sont des SPH0641LU4H-1 **bottom port** : le son entre par un trou du PCB, côté face arrière. La vue utile pour l'écoute est donc celle **côté port acoustique**, qui est le **miroir gauche-droite** de la vue KiCad (côté composants).
 
-- `mic_layout_acoustique.svg` : vue côté port acoustique (face arrière, image en miroir). Les graduations en x donnent la coordonnée KiCad (de 220 à gauche à 50 à droite).
+- `mic_layout_acoustique.svg` : **vue principale** : côté port acoustique (face arrière, miroir de la vue KiCad), puis tournée de **90° vers la droite** pour suivre l'horizontale de la caméra. Les graduations donnent les coordonnées KiCad (x à gauche, y en bas).
+- `mic_layout_acoustique_miroir.svg` : la même vue sans la rotation de 90°.
 - `mic_layout_composants.svg` : vue du dessus, côté composants, comme dans KiCad.
 - Régénération : `python3 gen_mic_layout.py` (lit `mic_map.csv`).
 

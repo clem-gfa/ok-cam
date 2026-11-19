@@ -1,66 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-30 -50 1250.0 810.0" width="1250.0" height="810.0" font-family="Helvetica,Arial,sans-serif">
-<rect x="-30" y="-50" width="1250.0" height="810.0" fill="#ffffff"/>
-<text x="0" y="-33" font-size="17" font-weight="bold" fill="#222">DARWIN Rev1 — micros vus côté composants (dessus, comme dans KiCad), canal de l'appli = numéro MK</text>
-<text x="0" y="-18" font-size="11.5" fill="#555">Origine KiCad (50, 50) mm en haut à gauche, x vers la droite, y vers le bas.</text>
-<text x="0" y="-4" font-size="11.5" fill="#555">Carte 170 × 100 mm. Plein vert = micro « haut » (MK impair, SELECT = VDD) ; creux orange = micro « bas » (MK pair, SELECT = GND).</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -60 1270.0 820.0" width="1270.0" height="820.0" font-family="Helvetica,Arial,sans-serif">
+<rect x="-40" y="-60" width="1270.0" height="820.0" fill="#ffffff"/>
+<text x="-30" y="-40" font-size="15" font-weight="bold" fill="#222">DARWIN Rev1 — micros côté composants (dessus, comme dans KiCad), canal de l'appli = numéro MK</text>
+<text x="-30" y="-25" font-size="11" fill="#555">Origine KiCad (50, 50) mm en haut à gauche, x vers la droite, y vers le bas.</text>
+<text x="-30" y="-11" font-size="11" fill="#555">Plein vert = micro « haut » (MK impair, SELECT = VDD) ; creux orange = micro « bas » (MK pair, SELECT = GND).</text>
 <rect x="0" y="0" width="1190.0" height="700.0" rx="14.0" fill="#f4f6f4" stroke="#222" stroke-width="2"/>
-<line x1="0.0" y1="0" x2="0.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="0.0" x2="0.0" y2="700.0" stroke="#dde3dd"/>
 <text x="0.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">50</text>
-<line x1="70.0" y1="0" x2="70.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="70.0" y1="0.0" x2="70.0" y2="700.0" stroke="#dde3dd"/>
 <text x="70.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">60</text>
-<line x1="140.0" y1="0" x2="140.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="140.0" y1="0.0" x2="140.0" y2="700.0" stroke="#dde3dd"/>
 <text x="140.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">70</text>
-<line x1="210.0" y1="0" x2="210.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="210.0" y1="0.0" x2="210.0" y2="700.0" stroke="#dde3dd"/>
 <text x="210.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">80</text>
-<line x1="280.0" y1="0" x2="280.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="280.0" y1="0.0" x2="280.0" y2="700.0" stroke="#dde3dd"/>
 <text x="280.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">90</text>
-<line x1="350.0" y1="0" x2="350.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="350.0" y1="0.0" x2="350.0" y2="700.0" stroke="#dde3dd"/>
 <text x="350.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">100</text>
-<line x1="420.0" y1="0" x2="420.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="420.0" y1="0.0" x2="420.0" y2="700.0" stroke="#dde3dd"/>
 <text x="420.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">110</text>
-<line x1="490.0" y1="0" x2="490.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="490.0" y1="0.0" x2="490.0" y2="700.0" stroke="#dde3dd"/>
 <text x="490.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">120</text>
-<line x1="560.0" y1="0" x2="560.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="560.0" y1="0.0" x2="560.0" y2="700.0" stroke="#dde3dd"/>
 <text x="560.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">130</text>
-<line x1="630.0" y1="0" x2="630.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="630.0" y1="0.0" x2="630.0" y2="700.0" stroke="#dde3dd"/>
 <text x="630.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">140</text>
-<line x1="700.0" y1="0" x2="700.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="700.0" y1="0.0" x2="700.0" y2="700.0" stroke="#dde3dd"/>
 <text x="700.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">150</text>
-<line x1="770.0" y1="0" x2="770.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="770.0" y1="0.0" x2="770.0" y2="700.0" stroke="#dde3dd"/>
 <text x="770.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">160</text>
-<line x1="840.0" y1="0" x2="840.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="840.0" y1="0.0" x2="840.0" y2="700.0" stroke="#dde3dd"/>
 <text x="840.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">170</text>
-<line x1="910.0" y1="0" x2="910.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="910.0" y1="0.0" x2="910.0" y2="700.0" stroke="#dde3dd"/>
 <text x="910.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">180</text>
-<line x1="980.0" y1="0" x2="980.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="980.0" y1="0.0" x2="980.0" y2="700.0" stroke="#dde3dd"/>
 <text x="980.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">190</text>
-<line x1="1050.0" y1="0" x2="1050.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="1050.0" y1="0.0" x2="1050.0" y2="700.0" stroke="#dde3dd"/>
 <text x="1050.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">200</text>
-<line x1="1120.0" y1="0" x2="1120.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="1120.0" y1="0.0" x2="1120.0" y2="700.0" stroke="#dde3dd"/>
 <text x="1120.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">210</text>
-<line x1="1190.0" y1="0" x2="1190.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="1190.0" y1="0.0" x2="1190.0" y2="700.0" stroke="#dde3dd"/>
 <text x="1190.0" y="716.0" font-size="11" fill="#777" text-anchor="middle">220</text>
-<line x1="0" y1="0.0" x2="1190.0" y2="0.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="0.0" x2="1190.0" y2="0.0" stroke="#dde3dd"/>
 <text x="-6" y="4.0" font-size="11" fill="#777" text-anchor="end">50</text>
-<line x1="0" y1="70.0" x2="1190.0" y2="70.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="70.0" x2="1190.0" y2="70.0" stroke="#dde3dd"/>
 <text x="-6" y="74.0" font-size="11" fill="#777" text-anchor="end">60</text>
-<line x1="0" y1="140.0" x2="1190.0" y2="140.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="140.0" x2="1190.0" y2="140.0" stroke="#dde3dd"/>
 <text x="-6" y="144.0" font-size="11" fill="#777" text-anchor="end">70</text>
-<line x1="0" y1="210.0" x2="1190.0" y2="210.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="210.0" x2="1190.0" y2="210.0" stroke="#dde3dd"/>
 <text x="-6" y="214.0" font-size="11" fill="#777" text-anchor="end">80</text>
-<line x1="0" y1="280.0" x2="1190.0" y2="280.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="280.0" x2="1190.0" y2="280.0" stroke="#dde3dd"/>
 <text x="-6" y="284.0" font-size="11" fill="#777" text-anchor="end">90</text>
-<line x1="0" y1="350.0" x2="1190.0" y2="350.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="350.0" x2="1190.0" y2="350.0" stroke="#dde3dd"/>
 <text x="-6" y="354.0" font-size="11" fill="#777" text-anchor="end">100</text>
-<line x1="0" y1="420.0" x2="1190.0" y2="420.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="420.0" x2="1190.0" y2="420.0" stroke="#dde3dd"/>
 <text x="-6" y="424.0" font-size="11" fill="#777" text-anchor="end">110</text>
-<line x1="0" y1="490.0" x2="1190.0" y2="490.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="490.0" x2="1190.0" y2="490.0" stroke="#dde3dd"/>
 <text x="-6" y="494.0" font-size="11" fill="#777" text-anchor="end">120</text>
-<line x1="0" y1="560.0" x2="1190.0" y2="560.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="560.0" x2="1190.0" y2="560.0" stroke="#dde3dd"/>
 <text x="-6" y="564.0" font-size="11" fill="#777" text-anchor="end">130</text>
-<line x1="0" y1="630.0" x2="1190.0" y2="630.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="630.0" x2="1190.0" y2="630.0" stroke="#dde3dd"/>
 <text x="-6" y="634.0" font-size="11" fill="#777" text-anchor="end">140</text>
-<line x1="0" y1="700.0" x2="1190.0" y2="700.0" stroke="#dde3dd"/>
+<line x1="0.0" y1="700.0" x2="1190.0" y2="700.0" stroke="#dde3dd"/>
 <text x="-6" y="704.0" font-size="11" fill="#777" text-anchor="end">150</text>
 <circle cx="350.0" cy="350.0" r="21.0" fill="#fff" stroke="#222" stroke-width="2"/><text x="350.0" y="354.0" font-size="10" fill="#555" text-anchor="middle">trou Ø6</text>
 <text x="742.0" y="294.0" font-size="12" fill="#888" text-anchor="middle">MC2 (module XEM, face arrière)</text>
