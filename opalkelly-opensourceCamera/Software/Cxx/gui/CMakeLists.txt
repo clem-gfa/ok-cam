@@ -137,7 +137,7 @@ if(OKCAM_WITH_ONNX)
     find_path(ONNXRT_INCLUDE_DIR onnxruntime_cxx_api.h HINTS ${_onnx_hints}
               PATH_SUFFIXES include include/onnxruntime build/native/include)
     find_library(ONNXRT_LIBRARY NAMES onnxruntime HINTS ${_onnx_hints}
-                 PATH_SUFFIXES lib runtimes/win-x64/native runtimes/linux-x64/native runtimes/osx-arm64/native runtimes/osx-x64/native)
+                 PATH_SUFFIXES lib runtimes/win-x64/native runtimes/linux-x64/native runtimes/linux-arm64/native runtimes/osx-arm64/native runtimes/osx-x64/native)
     if(ONNXRT_INCLUDE_DIR AND ONNXRT_LIBRARY)
         set(_onnx_ok TRUE)
     else()
@@ -308,7 +308,8 @@ elseif(OKCAM_BUNDLE_WX)
         endif()
     else()  # Linux
         set(_grd_exe "okCameraApp")
-        set(_grd_dirs "/usr/lib/x86_64-linux-gnu;/usr/lib")
+        # multiarch directory of the build machine: x86_64-linux-gnu, aarch64-linux-gnu (Raspberry Pi OS 64 bit)...
+        set(_grd_dirs "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE};/usr/lib/x86_64-linux-gnu;/usr/lib/aarch64-linux-gnu;/usr/lib")
         set(_grd_tool "")
     endif()
     # Normalize Windows backslashes (e.g. WXWIN=C:\wx3210) to forward slashes so the configured CMake

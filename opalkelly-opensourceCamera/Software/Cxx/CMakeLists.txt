@@ -73,7 +73,13 @@ if(WIN32)
 elseif(APPLE)
     set(_okfp_lib_hints "${OKFP_SDK}/lib/mac-arm64" "${OKFP_SDK}/lib/mac-x64")
 else()
-    set(_okfp_lib_hints "${OKFP_SDK}/lib/linux-x64")
+    # Linux: x86-64 (Ubuntu, Rocky...) and ARM64 (Raspberry Pi OS 12 / Bookworm, an official FrontPanel 6.1 target). The SDK carries
+    # every platform's library side by side; the exact ARM64 folder name is not documented, so the likely spellings are tried.
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+        set(_okfp_lib_hints "${OKFP_SDK}/lib/linux-arm64" "${OKFP_SDK}/lib/linux-aarch64" "${OKFP_SDK}/lib/linux-arm")
+    else()
+        set(_okfp_lib_hints "${OKFP_SDK}/lib/linux-x64")
+    endif()
 endif()
 find_library(OKFP_LIBRARY NAMES okFrontPanel
              HINTS ${_okfp_lib_hints} "${OKFP_SDK}/lib/x64" "${OKFP_SDK}/lib" "${OKFP_SDK}")
